@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows can be added later; razorrooster uses DuckDB and other deps
+        # that may need additional setup work to run cleanly on Windows runners.
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff check)
+        run: ruff check src tests
+
+      - name: Format check (ruff format)
+        run: ruff format --check src tests
+
+      # Type check strategy: src/ is already mypy-strict clean (0 errors).
+      # The newest module, calibration_backtest, is also strict-clean across
+      # both src and tests. We enforce strict on that module as a hard gate,
+      # then run a repo-wide strict check as an advisory baseline so we can
+      # track drift on the existing test-suite type debt (~220 known errors,
+      # all in tests/) without blocking CI.
+      - name: Type check (mypy --strict, calibration_backtest)
+        run: mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest
+
+      - name: Type check (mypy --strict, repo-wide advisory)
+        continue-on-error: true
+        run: mypy --strict src tests
+
+      - name: Run tests
+        run: pytest -q
+
+      # Slow tests are intentionally omitted: razorrooster's pytest config
+      # only defines `integration` and `smoke` markers (no `slow` marker).
+      # Smoke tests are deselected by default via addopts and require live
+      # service credentials, so they are not run in CI here.
+
+  # Future: package job (e.g. Briefcase, PyInstaller, or wheel publish) can
+  # be added here once razorrooster ships a packaged distribution. Loki uses
+  # Briefcase to build per-OS installers gated on tag pushes; razorrooster
+  # is currently a CLI-only Python package, so no packaging job is wired up.
