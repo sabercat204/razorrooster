@@ -1,0 +1,11 @@
+# Calibration-backtest defaults (T-CB-001).
+#
+# These values are the bootstrap defaults referenced by the design doc.
+# CLI flags override these at runtime.
+
+default_lag_days: 7
+minimum_lag_days: 1
+disk_cap_mb: 100
+max_workers: 4
+trace_compression: zstd
+trace_compression_level: 3
