@@ -1,0 +1,33 @@
+# Kalshi eligibility allow-list for the connector's startup gate
+# (T-KSI-002, T-KSI-020; REQ-KSI-ELIG-001).
+#
+# Kalshi is a CFTC-regulated US designated contract market. The v1
+# connector enforces an ALLOW-LIST posture (the inverse of Polymarket's
+# deny-list): the connector refuses to start unless the operator's
+# declared OPERATOR_JURISDICTION env var or config/operator.yaml
+# jurisdiction value is in this list.
+#
+# The same OPERATOR_JURISDICTION env var Polymarket consults is reused.
+# Operator declares jurisdiction once; both connectors enforce their
+# respective postures.
+#
+# Format: ISO 3166-1 alpha-2 country codes (uppercase). Sub-national
+# codes may be added if/when Kalshi extends access at the
+# state/territory level. The matcher is case-insensitive; entries are
+# normalized to uppercase.
+
+version: 1
+
+notes: |
+  Operator responsibility: keep this list in sync with Kalshi's
+  current published eligibility scope. Kalshi may extend or restrict
+  access without notice. The connector's eligibility gate fails
+  closed — if the declared jurisdiction is not in this list, the
+  connector refuses.
+
+  Adding a new entry to this list is an operator decision that
+  asserts they have verified Kalshi permits read-only public-data
+  access from that jurisdiction. v1 ships with the seed entry below.
+
+allowed:
+  - US

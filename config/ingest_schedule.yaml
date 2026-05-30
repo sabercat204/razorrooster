@@ -1,0 +1,76 @@
+# Razor-Rooster ingest schedule (T-022; design §7.1).
+#
+# Defines the cadence and freshness threshold per source. Loaded by
+# data_ingest at startup; invalid schemas abort the cycle.
+#
+# Cadence values: daily | weekly | monthly | annual.
+# time_of_day is a 24-hour HH:MM string (UTC).
+# day_of_week is a lowercase day name (used by weekly cadence).
+# freshness_threshold_seconds defaults are 2x cadence for fast-moving sources
+# and 7d for slow-moving ones.
+
+version: 1
+
+defaults:
+  max_workers: 4
+  batch_size: 10000
+
+sources:
+  fred:
+    cadence: daily
+    time_of_day: "08:00"
+    freshness_threshold_seconds: 172800     # 2 days
+
+  worldbank:
+    cadence: weekly
+    day_of_week: monday
+    freshness_threshold_seconds: 1209600    # 14 days
+
+  who_don:
+    cadence: daily
+    time_of_day: "08:15"
+    freshness_threshold_seconds: 172800
+
+  acled:
+    cadence: daily
+    time_of_day: "09:00"
+    freshness_threshold_seconds: 259200     # 3 days
+
+  gdelt_events:
+    cadence: daily
+    time_of_day: "08:30"
+    freshness_threshold_seconds: 86400      # 24h
+
+  federal_register:
+    cadence: daily
+    time_of_day: "08:45"
+    freshness_threshold_seconds: 172800
+
+  noaa:
+    cadence: daily
+    time_of_day: "09:15"
+    freshness_threshold_seconds: 172800
+
+  usgs_minerals:
+    cadence: annual
+    freshness_threshold_seconds: 31536000   # 1 year
+
+  eia:
+    cadence: daily
+    time_of_day: "09:30"
+    freshness_threshold_seconds: 172800
+
+  nrc_adams:
+    cadence: weekly
+    day_of_week: monday
+    freshness_threshold_seconds: 1209600
+
+  regulations_gov:
+    cadence: daily
+    time_of_day: "09:45"
+    freshness_threshold_seconds: 172800
+
+  bdi:
+    cadence: daily
+    time_of_day: "08:05"
+    freshness_threshold_seconds: 172800

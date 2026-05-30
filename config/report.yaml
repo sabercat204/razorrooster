@@ -1,0 +1,113 @@
+# Report-generator config (T-RG-001; REQ-RG-CONFIG-001..002; design §3.4 & §5.4).
+#
+# Edit ``enabled_sections`` to toggle which sections appear in the
+# rendered report. Disabled sections produce a one-line note in the
+# header rather than disappearing silently.
+
+enabled_sections:
+  - system_health
+  # - recent_tuning  # opt-in (T-RG-COMPAT-RECENT-001); enable to
+  #                  # surface recent threshold changes alongside the
+  #                  # data the thresholds shape.
+  - surfaced
+  - cross_venue
+  - watched
+  - calibration
+  # - reliability  # opt-in (DEFER-RG-COMPAT-003); enable once the
+  #                # corpus has enough resolutions per sector to
+  #                # populate every bin meaningfully.
+  - watchlist
+
+verbosity:
+  watchlist: full # 'full' includes scan reasoning text, 'compact' omits it
+  calibration: full # 'full' shows calibration verdicts, 'compact' just lists outcomes
+
+calibration_first_run_lookback_days: 30 # OQ-RG-004 resolution
+
+# Multi-venue calibration thresholds (DEFER-RG-COMPAT-001 + 002 resolution;
+# see specs/REPORT_GENERATOR_SUPPLEMENT_MULTIVENUE.md).
+#
+# All four global knobs are operator-tunable. Bad or out-of-range
+# values fall back to the defaults shown here with a warning logged.
+#
+# Per-sector overrides shadow the global value for one
+# ``domain_sector`` at a time. Sectors without an override entry use
+# the global value. Bad per-sector values fall back to the global
+# value with a warning logged.
+thresholds:
+  # Cross-venue disagreement: classes whose venue prices spread by at
+  # least this many basis points appear in the cross_venue section.
+  # 500 bps == 5 percentage points. Lower it to surface narrower
+  # disagreements; raise it for a quieter section.
+  cross_venue_spread_bps: 500
+  # Per-sector overrides. Example:
+  # cross_venue_spread_bps_per_sector:
+  #   geopolitical: 700      # geopolitical questions diverge more by
+  #                          # nature; require a wider gap to surface.
+  #   macroeconomic: 300     # macro questions are tighter; smaller
+  #                          # divergences are still informative.
+
+  # Single-venue dominance warning (in surfaced.warnings): fires when
+  # one venue holds strictly greater than this fraction of combined
+  # 24h volume across the venues mapped to a class. 0.80 == 80%.
+  # Range [0.0, 1.0]; strict `>` means 50/50 splits never trip even
+  # at the boundary.
+  single_venue_dominance_pct: 0.80
+  # Per-sector overrides. Example:
+  # single_venue_dominance_pct_per_sector:
+  #   regulatory: 0.65       # regulatory contracts often have one
+  #                          # dominant venue; flag earlier.
+
+  # Per-sector Brier rolling window in days. Resolutions whose
+  # resolution_ts is older than (until_ts - window_days) are not
+  # scored. Range [1, 3650]. Use a shorter window to react faster to
+  # recent calibration drift; longer to smooth single-cycle noise.
+  brier_window_days: 90
+  # Per-sector overrides. Example:
+  # brier_window_days_per_sector:
+  #   macroeconomic: 30      # macro indicators move fast; track a
+  #                          # tighter window so calibration drift is
+  #                          # visible sooner.
+  #   geopolitical: 180      # geopolitical events are infrequent;
+  #                          # smooth across a longer window.
+
+  # Per-sector Brier miscalibration threshold. Sectors whose rolling
+  # Brier exceeds this value get the `miscalibrated` flag in the
+  # calibration section. 0.25 == the random-guesser Brier at p=0.5.
+  # Range [0.0, 1.0]; lower it for a stricter standard.
+  brier_miscalibration: 0.25
+  # Per-sector overrides. Example:
+  # brier_miscalibration_per_sector:
+  #   public_health: 0.20    # public-health calibration matters;
+  #                          # set a stricter threshold here.
+
+  # Reliability-diagram bin count (DEFER-RG-COMPAT-003). 10 equal-
+  # width bins covering [0, 1]. Lower for fewer, broader bins;
+  # raise for tighter resolution. Range [2, 50].
+  reliability_bin_count: 10
+  # Per-sector overrides. Example:
+  # reliability_bin_count_per_sector:
+  #   macroeconomic: 20      # plenty of resolutions; finer bins.
+  #   geopolitical: 5        # fewer resolutions; broader bins.
+
+  # Reliability-diagram sparse-bin floor. Bins with fewer than this
+  # many resolutions in the rolling window get the ``sparse`` flag;
+  # operators should treat sparse bins as noisy. Range [1, 1000].
+  reliability_min_resolutions_per_bin: 5
+  # Per-sector overrides. Example:
+  # reliability_min_resolutions_per_bin_per_sector:
+  #   macroeconomic: 10      # higher bar; cleaner aggregate.
+  #   geopolitical: 3        # rare events; small samples still informative.
+# Auto-prune of report_threshold_measurements (T-RG-COMPAT-AUTOPRUNE-001).
+# Disabled by default — the table is small per cycle so most operators
+# can leave it alone. When enabled, every successful report cycle deletes
+# rows that match either of the two retention strategies (they stack —
+# rows die under either condition).
+#
+# To enable, set `enabled: true` and tune `older_than_days` and/or
+# `keep_last`. Manual `razor-rooster report prune-measurements` keeps
+# working alongside auto-prune.
+auto_prune:
+  enabled: false
+  older_than_days: 365 # delete measurements older than this many days
+  # keep_last: 365   # keep only the newest N rows per measurement kind

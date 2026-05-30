@@ -1,0 +1,66 @@
+# Razor-Rooster kalshi_connector configuration (T-KSI-002; design §4).
+#
+# Loaded at connector startup and validated by Pydantic. Invalid values
+# fail fast with a clear error.
+
+version: 1
+
+# Kalshi production base URL. Demo (external-api.demo.kalshi.co) is a
+# v2 trading concern; v1 reads only public production data.
+base_url: "https://external-api.kalshi.com/trade-api/v2"
+
+# Operator's API tier. Drives the rate limiter's bucket capacity and
+# refill rate (set to 50% of the tier's read budget by default).
+# Allowed: Basic | Advanced | Premier | Paragon | Prime
+tier: "Basic"
+
+sync:
+  cutoff:
+    cadence: every_cycle              # /historical/cutoff snapshotted at every cycle's start
+  series:
+    cadence: daily
+    time_of_day: "08:30"
+  events:
+    cadence: daily
+    time_of_day: "08:35"
+  markets:
+    cadence: daily
+    time_of_day: "08:40"
+  prices:
+    default_cadence: every_30min
+    minimum_interval_seconds: 60
+    watched_markets: []               # populated by mispricing_detector or operator
+  settlements:
+    cadence: daily
+    time_of_day: "08:45"
+  trades:
+    cadence: daily                    # only runs against watched_markets
+    time_of_day: "09:00"
+
+rate_limit:
+  # Per-tier read-token budgets (tokens/sec). The limiter scales bucket
+  # capacity and refill to headroom_pct of the operator's declared tier.
+  tier_budget_tokens_per_sec:
+    Basic: 200
+    Advanced: 300
+    Premier: 1000
+    Paragon: 2000
+    Prime: 4000
+  headroom_pct: 0.5                   # target 50% of tier budget
+  backoff_base_seconds: 1.0
+  backoff_max_seconds: 60.0
+  max_retries: 5
+
+freshness:
+  markets_threshold_seconds: 172800   # 48h
+  prices_threshold_seconds: 10800     # 3h (tighter than Polymarket's 6h since cadence is 30min)
+  settlements_threshold_seconds: 172800
+
+sector_mapping:
+  heuristic_version: 1
+  keywords_file: "config/kalshi_sector_keywords.yaml"
+
+# ToS URL the gate hashes. Operator-updateable when Kalshi revises its
+# Terms; the gate falls back to last-known hash via
+# kalshi_tos_version_history if the live URL is briefly unreachable.
+tos_url: "https://kalshi.com/docs/kalshi-terms-of-service"

@@ -1,0 +1,71 @@
+{% extends "_base.html" %}
+{% block title %}Compare reports &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Compare two reports</h2>
+
+<form class="filter-form" method="get" action="/compare">
+    <label>Older report (a)
+        <select name="a">
+            <option value="">&mdash;</option>
+            {% for r in available_reports %}
+            <option value="{{ r.report_id }}" {% if a == r.report_id %}selected{% endif %}>
+                {{ r.generated_at.strftime('%Y-%m-%d %H:%M') }} &middot; {{ r.report_id[:12] }}
+            </option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Newer report (b)
+        <select name="b">
+            <option value="">&mdash;</option>
+            {% for r in available_reports %}
+            <option value="{{ r.report_id }}" {% if b == r.report_id %}selected{% endif %}>
+                {{ r.generated_at.strftime('%Y-%m-%d %H:%M') }} &middot; {{ r.report_id[:12] }}
+            </option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Compare</button>
+</form>
+
+{% if missing %}
+<div class="empty">No report found for id(s): {{ missing|join(', ') }}.</div>
+{% elif diff %}
+<h3>Diff</h3>
+<table>
+<thead><tr><th>field</th><th>a</th><th>b</th><th>changed</th></tr></thead>
+<tbody>
+<tr {% if diff.library_version_changed %}class="changed"{% endif %}>
+    <th>library version</th>
+    <td>{{ diff.library_version_a }}</td>
+    <td>{{ diff.library_version_b }}</td>
+    <td>{{ 'yes' if diff.library_version_changed else 'no' }}</td>
+</tr>
+<tr {% if diff.disclaimer_changed %}class="changed"{% endif %}>
+    <th>disclaimer hash</th>
+    <td><code>{{ diff.disclaimer_hash_a[:12] }}&hellip;</code></td>
+    <td><code>{{ diff.disclaimer_hash_b[:12] }}&hellip;</code></td>
+    <td>{{ 'yes' if diff.disclaimer_changed else 'no' }}</td>
+</tr>
+<tr {% if diff.terminal_length_a != diff.terminal_length_b %}class="changed"{% endif %}>
+    <th>terminal text length</th>
+    <td class="num">{{ diff.terminal_length_a }}</td>
+    <td class="num">{{ diff.terminal_length_b }} ({{ '%+d'|format(diff.terminal_length_delta) }})</td>
+    <td>{{ 'yes' if diff.terminal_length_a != diff.terminal_length_b else 'no' }}</td>
+</tr>
+</tbody>
+</table>
+
+<h3>Sections</h3>
+{% if diff.sections_added or diff.sections_removed %}
+<ul>
+{% for s in diff.sections_added %}<li><span class="pill added">added</span> {{ s }}</li>{% endfor %}
+{% for s in diff.sections_removed %}<li><span class="pill removed">removed</span> {{ s }}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="muted">No section presence changes.</p>
+{% endif %}
+
+<h3>Standalone HTML view</h3>
+<p><a href="/compare/{{ a }}/{{ b }}/html">Open the full self-contained compare view &rarr;</a></p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,66 @@
+# Razor-Rooster source caps (T-022; design §7.2).
+#
+# Controls disk-budget enforcement during backfill (REQ-BACKFILL-003) and
+# warns/pauses when the global corpus approaches its cap (NFR-PERF-002).
+
+version: 1
+
+global:
+  max_corpus_bytes: 107374182400      # 100 GB
+  warn_at_pct: 80.0
+  pause_backfill_at_pct: 95.0
+
+per_source:
+  # GDELT events are the highest-volume source; cap to 5 years of history
+  # at v1 (per design §2 OQ-002 resolution) and ~30 GB on disk.
+  gdelt_events:
+    max_backfill_years: 5
+    max_bytes: 32212254720             # 30 GB
+
+  # ACLED's free-tier history extends roughly to 1997 in regions where
+  # collection is mature; 30 years is the practical envelope.
+  acled:
+    max_backfill_years: 30
+
+  # FRED depth is bounded by the source itself; 50 years is comfortable.
+  fred:
+    max_backfill_years: 50
+
+  # World Bank indicators are long-history; same as FRED in practice.
+  worldbank:
+    max_backfill_years: 50
+
+  # NOAA Climate Data Online: 50 years per design §2 / NFR-PERF-002, paced
+  # to respect the CDO 1000-requests-per-day free-tier limit.
+  noaa:
+    max_backfill_years: 50
+
+  # USGS Mineral Commodity Summaries are annual; 50 years of summaries is
+  # ~50 PDFs of structured data per design §11.
+  usgs_minerals:
+    max_backfill_years: 50
+
+  # EIA series go back ~30 years for the headline indicators.
+  eia:
+    max_backfill_years: 30
+
+  # NRC ADAMS PARS Library is 1999+ per the Public Search API. Cap at
+  # ~25 years of depth.
+  nrc_adams:
+    max_backfill_years: 25
+
+  # regulations.gov goes back to 2003.
+  regulations_gov:
+    max_backfill_years: 22
+
+  # Federal Register API depth is 1994+.
+  federal_register:
+    max_backfill_years: 31
+
+  # WHO DON: ~30 years of advisory bulletins.
+  who_don:
+    max_backfill_years: 30
+
+  # BDI is ingested via FRED; uses FRED's depth.
+  bdi:
+    max_backfill_years: 50

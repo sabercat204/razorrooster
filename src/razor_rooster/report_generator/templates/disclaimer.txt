@@ -1,0 +1,7 @@
+This report is decision-support analysis. The system surfaces patterns,
+comparisons, and analyses; it does not place trades, recommend specific
+actions, or claim certainty about future events. The operator is
+responsible for any decisions taken based on this report. Polymarket
+prices represent the aggregate view of market participants, who often
+have information the model does not. When model and market disagree, the
+market is correct more often than not.

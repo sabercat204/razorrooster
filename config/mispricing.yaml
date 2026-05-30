@@ -1,0 +1,50 @@
+# Mispricing detector configuration (MISPRICING_DETECTOR_DESIGN.md §3.6).
+#
+# Tunes surfacing thresholds, market-price freshness, liquidity floors,
+# and the keyword-overlap bar for auto-mapping confidence levels. See
+# specs/MISPRICING_DETECTOR_DESIGN.md for the rationale behind each
+# default.
+
+version: 1
+
+# Default minimum log-odds delta for surfacing. Per-sector overrides
+# apply when present.
+surfacing_thresholds:
+  log_odds_delta_min: 0.5
+  per_sector:
+    public_health: 0.5
+    geopolitical: 0.6
+    regulatory: 0.4
+    commodity: 0.5
+    climate: 0.5
+    infrastructure_energy: 0.5
+    macroeconomic: 0.5
+    cross_cutting: 0.5
+
+# Market-price freshness. Comparisons whose latest price snapshot is
+# older than this threshold are flagged stale_market_price and
+# surfacing is suppressed (REQ-MD-CMP-004). Default twice the
+# polymarket_connector snapshot cadence (6h) -> 12h.
+market_price_freshness_seconds: 43200  # 12 hours
+
+# Minimum 24h volume floor for surfacing eligibility (REQ-MD-CONFIG-003).
+# Configurable per sector; null means no floor (skip the check).
+liquidity_floors:
+  default: 10000.0
+  per_sector:
+    public_health: 5000.0
+    geopolitical: 10000.0
+    regulatory: 2500.0
+    commodity: 10000.0
+    climate: 2500.0
+    infrastructure_energy: 5000.0
+    macroeconomic: 10000.0
+    cross_cutting: 5000.0
+
+# Auto-mapping confidence heuristic knobs (OQ-MD-001 resolution).
+auto_mapping:
+  min_keyword_overlap_for_inferred: 3
+  require_temporal_qualifier_for_inferred: true
+
+# Bound on per-mapping parallelism within a cycle.
+max_workers: 4

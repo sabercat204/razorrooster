@@ -1,0 +1,64 @@
+{% extends "_base.html" %}
+{% block title %}Report {{ report.report_id }} &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Report <code>{{ report.report_id }}</code></h2>
+<p class="muted">
+    Generated {{ report.generated_at.isoformat() }} &middot;
+    cycle window {{ report.since_ts.isoformat() }} &rarr; {{ report.until_ts.isoformat() }} &middot;
+    library v{{ report.library_version }}
+</p>
+
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="label">Sections rendered</div>
+        <div class="value">{{ report.sections_rendered|length }}/{{ report.sections_enabled|length }}</div>
+    </div>
+    <div class="summary-card {% if report.sections_failed|length %}warn{% endif %}">
+        <div class="label">Sections failed</div>
+        <div class="value">{{ report.sections_failed|length }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Terminal chars</div>
+        <div class="value">{{ report.rendered_terminal_text|length }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Duration (s)</div>
+        <div class="value">{{ "%.3f"|format(report.duration_seconds) if report.duration_seconds is not none else "&mdash;" | safe }}</div>
+    </div>
+</div>
+
+{% if report.sections_failed %}
+<h3>Failed sections</h3>
+<table>
+<thead><tr><th>Section</th><th>Error</th></tr></thead>
+<tbody>
+{% for f in report.sections_failed %}
+<tr>
+    <td><code>{{ f.get('section', '?') }}</code></td>
+    <td>{{ f.get('error', '?') }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+
+<h3>Sections rendered</h3>
+<p>
+{% for s in report.sections_rendered %}
+    <span class="pill">{{ s }}</span>
+{% endfor %}
+</p>
+
+<h3>Terminal output</h3>
+<pre>{{ report.rendered_terminal_text }}</pre>
+
+{% if report.rendered_html_text %}
+<h3>HTML rendering</h3>
+<p><a href="/reports/{{ report.report_id }}/html">Open standalone HTML view &rarr;</a></p>
+{% endif %}
+
+<p>
+    <a href="/reports">&larr; back to all reports</a>
+    {% if prev_report_id %}&middot; <a href="/compare?a={{ prev_report_id }}&amp;b={{ report.report_id }}">compare to previous</a>{% endif %}
+</p>
+{% endblock %}

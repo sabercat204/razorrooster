@@ -1,0 +1,43 @@
+# Signal scanner configuration (SIGNAL_SCANNER_DESIGN.md §3.7).
+#
+# Tunes candidate-identification thresholds, confidence floor, stale-source
+# eligibility, and Monte Carlo sample count. See
+# specs/SIGNAL_SCANNER_DESIGN.md for the rationale behind each default.
+
+version: 1
+
+# Default minimum log-odds shift for candidate marking. Per-sector
+# overrides apply when present; otherwise the default value is used.
+candidate_thresholds:
+  log_odds_shift_min: 0.5
+  per_sector:
+    public_health: 0.5
+    geopolitical: 0.6
+    regulatory: 0.4
+    commodity: 0.5
+    climate: 0.5
+    infrastructure_energy: 0.5
+    macroeconomic: 0.5
+    cross_cutting: 0.5
+
+# Minimum signature confidence (0..1) required for candidate marking.
+# Below this floor, the scan record is not eligible regardless of
+# divergence (REQ-SCAN-CAND-003).
+confidence_floor: 0.3
+
+# Whether scans flagged source_stale_warning are eligible for candidate
+# marking (REQ-SCAN-CAND-004). Default false.
+stale_source_eligible_for_candidate: false
+
+# Library-stale threshold in days (REQ-SCAN-PROV-003).
+library_stale_threshold_days: 14
+
+# Per-class disable list (REQ-SCAN-CONFIG-002). class_id strings.
+disabled_classes: []
+
+# Monte Carlo sample count for credible-interval propagation
+# (OQ-SCAN-002 resolution).
+monte_carlo_samples: 1000
+
+# Bound on per-class parallelism in scan runs.
+max_workers: 4

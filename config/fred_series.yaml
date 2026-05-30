@@ -1,0 +1,67 @@
+# FRED series IDs ingested by the FRED connector (T-050).
+#
+# Each entry is a series the connector will fetch. The list is operator-
+# editable; adding or removing entries does not require a code change.
+#
+# Frequency is FRED's own designation (D=daily, W=weekly, M=monthly,
+# Q=quarterly, A=annual). It's used for advisory purposes; the connector
+# pulls whatever observations FRED returns.
+
+version: 1
+
+series:
+  # Headline interest rates (daily).
+  - id: DGS10
+    title: "10-Year Treasury Constant Maturity Rate"
+    frequency: D
+    units: percent
+
+  - id: DGS2
+    title: "2-Year Treasury Constant Maturity Rate"
+    frequency: D
+    units: percent
+
+  - id: DFEDTARU
+    title: "Federal Funds Target Range Upper Limit"
+    frequency: D
+    units: percent
+
+  # Headline economic indicators.
+  - id: CPIAUCSL
+    title: "Consumer Price Index for All Urban Consumers (All Items)"
+    frequency: M
+    units: index_1982_84_100
+
+  - id: UNRATE
+    title: "Unemployment Rate"
+    frequency: M
+    units: percent
+
+  - id: GDPC1
+    title: "Real Gross Domestic Product"
+    frequency: Q
+    units: billions_chained_2017_dollars
+
+  # Commodity prices (daily/weekly).
+  - id: DCOILWTICO
+    title: "Crude Oil Prices: WTI (Cushing)"
+    frequency: D
+    units: usd_per_barrel
+
+  - id: GASREGW
+    title: "US Regular Gasoline Prices (weekly average)"
+    frequency: W
+    units: usd_per_gallon
+
+  - id: PPIACO
+    title: "Producer Price Index for All Commodities"
+    frequency: M
+    units: index_1982_100
+
+  # T-057 BDI proxy — Global price of LNG (used as a tradeable shipping
+  # demand proxy; the BDI itself is not on FRED). Operator can swap in
+  # any other freight-flavored series via this config without code change.
+  - id: PNGASJPUSDM
+    title: "Global price of Liquefied Natural Gas"
+    frequency: M
+    units: usd_per_mmbtu

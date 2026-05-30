@@ -1,0 +1,87 @@
+{% extends "_base.html" %}
+{% block title %}Digest &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Digest</h2>
+
+<form class="filter-form" method="get" action="/digest">
+    <label>Days
+        <input type="number" name="days" value="{{ filters.days }}" min="1" max="365">
+    </label>
+    <label>Sort by
+        <select name="sort_by">
+            {% for opt in ['generated_at', 'sections_failed', 'terminal_chars'] %}
+            <option value="{{ opt }}" {% if filters.sort_by == opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Direction
+        <select name="sort_direction">
+            <option value="desc" {% if filters.sort_direction == 'desc' %}selected{% endif %}>desc</option>
+            <option value="asc" {% if filters.sort_direction == 'asc' %}selected{% endif %}>asc</option>
+        </select>
+    </label>
+    <label>Top N
+        <input type="number" name="top" value="{{ filters.top or '' }}" min="1" max="1000" placeholder="all">
+    </label>
+    <label>Report ID prefix
+        <input type="text" name="report_id" value="{{ filters.report_id_prefix or '' }}" placeholder="rpt-2026-05">
+    </label>
+    <button type="submit">Apply</button>
+</form>
+
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="label">Total in window</div>
+        <div class="value">{{ aggregate.report_count }}</div>
+    </div>
+    <div class="summary-card {% if aggregate.cycles_with_failures %}warn{% endif %}">
+        <div class="label">Cycles with failures</div>
+        <div class="value">{{ aggregate.cycles_with_failures }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Avg sections rendered</div>
+        <div class="value">{{ "%.1f"|format(aggregate.avg_sections_rendered) if aggregate.avg_sections_rendered is not none else "&mdash;" | safe }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Avg terminal chars</div>
+        <div class="value">{{ "%.0f"|format(aggregate.avg_terminal_chars) if aggregate.avg_terminal_chars is not none else "&mdash;" | safe }}</div>
+    </div>
+</div>
+
+{% if reports %}
+<table>
+<thead>
+<tr>
+    <th>Generated at</th>
+    <th>Report ID</th>
+    <th class="num">Sections</th>
+    <th class="num">Failed</th>
+    <th class="num">Terminal chars</th>
+    <th>Outputs</th>
+</tr>
+</thead>
+<tbody>
+{% for r in reports %}
+<tr>
+    <td><a href="/reports/{{ r.report_id }}">{{ r.generated_at.isoformat() }}</a></td>
+    <td><code>{{ r.report_id }}</code></td>
+    <td class="num">{{ r.sections_rendered|length }}/{{ r.sections_enabled|length }}</td>
+    <td class="num">
+        {% if r.sections_failed|length %}<span class="pill warn">{{ r.sections_failed|length }}</span>{% else %}0{% endif %}
+    </td>
+    <td class="num">{{ r.rendered_terminal_text|length }}</td>
+    <td>
+        {% if r.markdown_path %}<span class="pill">md</span>{% endif %}
+        {% if r.html_path %}<span class="pill">html</span>{% endif %}
+    </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% if filters.top and filters.top < aggregate.report_count %}
+<p class="muted">Showing top {{ reports|length }} of {{ aggregate.report_count }} (sorted by {{ filters.sort_by }} {{ filters.sort_direction }}).</p>
+{% endif %}
+{% else %}
+<div class="empty">No reports in window.</div>
+{% endif %}
+{% endblock %}

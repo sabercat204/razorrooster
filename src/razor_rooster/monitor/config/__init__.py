@@ -1,0 +1,1 @@
+"""Configuration loader for monitor."""

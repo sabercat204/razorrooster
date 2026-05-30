@@ -1,0 +1,32 @@
+# World Bank indicator configuration (T-051).
+#
+# Each entry describes one indicator pulled by the World Bank connector.
+# Country scope is set per-indicator: 'all' fetches every country (the
+# World Bank's 'all' alias), or a list of ISO 3166-1 alpha-3 codes.
+#
+# A typical first-run pull is one HTTP page per (indicator, country)
+# combination. The connector handles pagination via the World Bank's
+# `page` parameter.
+
+version: 1
+
+indicators:
+  - id: NY.GDP.MKTP.CD
+    title: "GDP (current US$)"
+    countries: all
+
+  - id: SP.POP.TOTL
+    title: "Population, total"
+    countries: all
+
+  - id: SI.POV.GINI
+    title: "Gini index"
+    countries: all
+
+  - id: NV.AGR.TOTL.ZS
+    title: "Agriculture, value added (% of GDP)"
+    countries: all
+
+  - id: EG.USE.PCAP.KG.OE
+    title: "Energy use (kg of oil equivalent per capita)"
+    countries: all

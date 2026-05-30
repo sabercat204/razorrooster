@@ -1,0 +1,48 @@
+{% extends "_base.html" %}
+{% block title %}Calibration &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Calibration</h2>
+<p class="muted">
+    Calibration measurements recorded across recent report cycles.
+    For the full reliability diagram and per-sector Brier scores, see the
+    daily report's calibration sections.
+</p>
+
+<h3>Cross-venue spread (bps) measurements</h3>
+{% if measurements %}
+<table>
+<thead>
+<tr>
+    <th>Measured at</th>
+    <th>Report ID</th>
+    <th class="num">N observations</th>
+    <th class="num">N above threshold</th>
+    <th class="num">Threshold</th>
+    <th class="num">Mean</th>
+    <th class="num">p50</th>
+    <th class="num">p90</th>
+</tr>
+</thead>
+<tbody>
+{% for m in measurements %}
+<tr>
+    <td>{{ m.measured_at.isoformat() }}</td>
+    <td><code>{{ m.report_id[:12] }}&hellip;</code></td>
+    <td class="num">{{ m.n_observations }}</td>
+    <td class="num">{{ m.n_above_threshold }}</td>
+    <td class="num">{{ "%g"|format(m.configured_threshold) }}</td>
+    <td class="num">{{ "%.2f"|format(m.distribution.get('mean')) if m.distribution.get('mean') is not none else "&mdash;" | safe }}</td>
+    <td class="num">{{ "%.2f"|format(m.distribution.get('percentiles', {}).get('0.5')) if m.distribution.get('percentiles', {}).get('0.5') is not none else "&mdash;" | safe }}</td>
+    <td class="num">{{ "%.2f"|format(m.distribution.get('percentiles', {}).get('0.9')) if m.distribution.get('percentiles', {}).get('0.9') is not none else "&mdash;" | safe }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">
+    No calibration measurements yet. Run
+    <code>razor-rooster report generate</code> a few times to populate
+    the per-cycle distribution table.
+</div>
+{% endif %}
+{% endblock %}

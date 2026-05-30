@@ -1,0 +1,137 @@
+# Razor-Rooster sector keyword catalogue for the Polymarket sector
+# heuristic mapper (T-PMC-002; design §3.5; OQ-PMC-001 resolution).
+#
+# DEFER-PMC-001: this list is curated and intentionally small at v1. It
+# expands over time as `razor-rooster polymarket needs-review` triage
+# feedback identifies missing terms. Adding a keyword here does not
+# require code changes; the mapper re-reads at startup.
+#
+# Conventions:
+# - Case-insensitive matching (the loader rejects case-duplicates).
+# - Phrases are allowed (e.g. "executive order", "supreme court").
+# - Keep keywords specific enough to discriminate; e.g. "rule" alone is
+#   too broad — pair with a qualifier where reasonable.
+
+version: 1
+
+sectors:
+
+  public_health:
+    - pandemic
+    - outbreak
+    - WHO
+    - PHEIC
+    - vaccine
+    - vaccination
+    - disease
+    - epidemic
+    - virus
+    - infection
+    - measles
+    - mpox
+    - influenza
+    - COVID
+    - bird flu
+    - H5N1
+    - cholera
+    - ebola
+    - polio
+    - tuberculosis
+
+  geopolitical:
+    - election
+    - war
+    - ceasefire
+    - sanctions
+    - coup
+    - treaty
+    - diplomatic
+    - invasion
+    - conflict
+    - airstrike
+    - missile
+    - hostage
+    - military
+    - nuclear test
+    - regime change
+    - referendum
+    - parliament
+    - prime minister
+    - president
+    - resignation
+
+  regulatory:
+    - FDA
+    - EPA
+    - SEC
+    - FTC
+    - CFPB
+    - Congress
+    - Senate
+    - House
+    - Supreme Court
+    - executive order
+    - rulemaking
+    - regulation
+    - rule finalized
+    - proposed rule
+    - confirmation hearing
+    - tariff
+    - federal register
+    - antitrust
+
+  commodity:
+    - oil
+    - crude
+    - gas
+    - LNG
+    - wheat
+    - corn
+    - soybeans
+    - copper
+    - lithium
+    - cobalt
+    - rare earth
+    - OPEC
+    - BDI
+    - shipping rate
+    - freight
+    - refinery
+    - export ban
+    - price cap
+
+  climate:
+    - hurricane
+    - typhoon
+    - drought
+    - wildfire
+    - flood
+    - ENSO
+    - El Nino
+    - La Nina
+    - NOAA
+    - heatwave
+    - tornado
+    - rainfall
+    - snowfall
+    - climate
+    - emissions
+    - sea level
+
+  infrastructure_energy:
+    - grid
+    - blackout
+    - power outage
+    - pipeline
+    - refinery outage
+    - transmission line
+    - substation
+    - SPR
+    - strategic petroleum reserve
+    - dam
+    - bridge collapse
+    - water main
+    - cyberattack
+    - ransomware
+    - chip shortage
+    - semiconductor

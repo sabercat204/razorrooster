@@ -1,0 +1,36 @@
+# NOAA Climate Data Online datasets ingested by the NOAA connector (T-055).
+#
+# Each entry is a (dataset_id, datatype_id, station_id) triple plus a
+# human-readable title. The connector pulls observations for the period
+# defined by the cycle (incremental: since last_successful_fetch;
+# backfill: from start_date forward).
+#
+# NOAA datasets and datatypes are documented at
+# https://www.ncei.noaa.gov/cdo-web/webservices/v2.
+
+version: 1
+
+# Free-tier rate limit guidance: 1000 requests/day, 5 requests/second.
+rate_limit:
+  requests_per_day: 1000
+  min_interval_seconds: 0.25
+
+queries:
+  # Global Historical Climatology Network — daily temperature for
+  # San Francisco, used as a representative climate signal.
+  - dataset: GHCND
+    station: GHCND:USW00023234   # San Francisco Intl Airport
+    datatypes:
+      - TMAX
+      - TMIN
+    title: "GHCND temperatures — San Francisco Intl Airport"
+    start_date: "1948-01-01"
+
+  # NCDC Storm Events Database — recent storm event counts at the
+  # state level. Used as an extreme-weather signal.
+  - dataset: GSOM
+    station: GHCND:USW00094728   # New York Central Park
+    datatypes:
+      - PRCP
+    title: "GSOM precipitation — New York Central Park"
+    start_date: "1900-01-01"
