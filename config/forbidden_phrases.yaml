@@ -1,0 +1,68 @@
+# Forbidden imperative phrases (OQ-PE-006 resolution).
+#
+# The position_engine renderer linter checks every rendered analysis
+# against this catalog. Any case-insensitive substring match raises
+# ImperativeLanguageDetected and refuses to ship the output.
+#
+# This list is the seed; operators extend it as new patterns of
+# imperative drift are noticed in real outputs.
+
+version: 1
+
+phrases:
+  # Buy/sell directives
+  - "you should buy"
+  - "you should sell"
+  - "buy this"
+  - "sell this"
+  - "buy now"
+  - "sell now"
+  - "you must buy"
+  - "you must sell"
+
+  # Trading-jargon directives
+  - "go long"
+  - "go short"
+  - "take this position"
+  - "open a position"
+  - "the trade is"
+  - "this trade"
+  - "trade this"
+  - "execute this"
+
+  # First-person recommendations
+  - "i recommend"
+  - "i would recommend"
+  - "my recommendation"
+  - "i suggest you"
+  - "i advise"
+
+  # Imperative imperatives
+  - "this is a buy"
+  - "this is a sell"
+  - "good buy"
+  - "good sell"
+  - "definitely buy"
+  - "definitely sell"
+  - "should you act"
+
+  # Confidence-pumping that crosses into directive territory
+  - "guaranteed to"
+  - "you cannot lose"
+  - "sure thing"
+  - "no risk"
+  - "risk-free"
+
+  # Editorial framing (added v0.45.0 alongside the at-a-glance
+  # section, where synthesis can drift toward the operator's job
+  # most easily). These are phrases that make the system sound
+  # like it's telling the operator what's important.
+  - "particularly notable"
+  - "worth attention"
+  - "key takeaway"
+  - "noteworthy"
+  - "you might want to"
+  - "you'll want to"
+  - "worth a look"
+  - "worth looking at"
+  - "the most important"

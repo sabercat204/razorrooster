@@ -1,0 +1,60 @@
+# Monitor configuration (MONITOR_DESIGN.md §3).
+#
+# Tunes the magnitude-classification thresholds for model and market
+# probability shifts and the time-decay alert window.
+
+version: 1
+
+# Magnitude bands for probability shifts (REQ-MON-DETECT-001).
+# none      < minor_threshold
+# minor     [minor_threshold, material_threshold)
+# material  [material_threshold, major_threshold)
+# major     >= major_threshold
+shift_bands:
+  default:
+    minor_threshold: 0.01
+    material_threshold: 0.05
+    major_threshold: 0.15
+  per_sector:
+    public_health:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+    geopolitical:
+      minor_threshold: 0.02
+      material_threshold: 0.07
+      major_threshold: 0.20
+    regulatory:
+      minor_threshold: 0.01
+      material_threshold: 0.04
+      major_threshold: 0.12
+    commodity:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+    climate:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+    infrastructure_energy:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+    macroeconomic:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+    cross_cutting:
+      minor_threshold: 0.01
+      material_threshold: 0.05
+      major_threshold: 0.15
+
+# Time-decay alert window (REQ-MON-DETECT-004). When days_to_resolution
+# is at or below this threshold, time_decay alerts fire.
+time_decay_alert_days: 7
+
+# Material-shift alert threshold (REQ-MON-ALERT-001). The alert ranker
+# treats any shift band >= 'material' as triggering a material_shift
+# alert, regardless of whether that band's numeric edge is above this
+# magnitude.
+material_shift_alert_threshold: 0.10

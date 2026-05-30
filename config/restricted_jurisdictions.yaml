@@ -1,0 +1,40 @@
+# Polymarket geo-restriction list for the connector's startup gate
+# (T-PMC-002, T-PMC-020; REQ-PMC-GEO-001).
+#
+# The connector refuses to start if `OPERATOR_JURISDICTION` env var or
+# config/operator.yaml jurisdiction value matches an entry here.
+#
+# This list reflects jurisdictions Polymarket has publicly described as
+# geoblocked at time of authoring. The list is config (not code) so
+# operators can update it as Polymarket changes its restrictions
+# without a code release. Operators MUST keep this list current
+# against Polymarket's current published restrictions.
+#
+# Format: ISO 3166-1 alpha-2 country codes (uppercase). Sub-national
+# codes may be added for jurisdictions Polymarket geoblocks at the
+# state/territory level (e.g. US-only operations may add specific US
+# state codes if Polymarket publishes such restrictions). The matcher
+# is case-insensitive; entries are normalized to uppercase.
+
+version: 1
+
+notes: |
+  Operator responsibility: keep this list in sync with Polymarket's
+  current published geographic restrictions. Polymarket may update its
+  restrictions without notice. The connector's geo gate fails closed —
+  if you are unsure whether your jurisdiction is on the list, do not
+  run the connector.
+
+restricted:
+  # Polymarket's publicly documented geoblock includes the United States.
+  # If you are an operator outside the US, leave US in the list. If you
+  # are operating from a Polymarket US (regulated platform) context, that
+  # is a separate connector — see OQ-PMC-005 resolution.
+  - US
+  # Sanctioned jurisdictions per US OFAC + Polymarket's documented stance.
+  - CU      # Cuba
+  - IR      # Iran
+  - KP      # North Korea
+  - SY      # Syria
+  - RU      # Russia
+  - BY      # Belarus

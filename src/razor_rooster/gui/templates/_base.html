@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Razor-Rooster Operator GUI{% endblock %}</title>
+<style>{{ inline_css | safe }}</style>
+</head>
+<body>
+<header class="topbar">
+    <h1>Razor-Rooster Operator GUI</h1>
+    <nav>
+        <a href="/" {% if active == 'index' %}class="active"{% endif %}>Dashboard</a>
+        <a href="/reports" {% if active == 'reports' %}class="active"{% endif %}>Reports</a>
+        <a href="/digest" {% if active == 'digest' %}class="active"{% endif %}>Digest</a>
+        <a href="/compare" {% if active == 'compare' %}class="active"{% endif %}>Compare</a>
+        <a href="/watch" {% if active == 'watch' %}class="active"{% endif %}>Watch</a>
+        <a href="/calibration" {% if active == 'calibration' %}class="active"{% endif %}>Calibration</a>
+    </nav>
+    <div class="meta">v{{ app_version }} &middot; read-only</div>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer class="disclaimer">
+    Razor-Rooster is an educational decision-support analysis platform.
+    The GUI is read-only — operator inputs flow through the CLI.
+    Every rendered page passes through the imperative-language linter
+    that protects the daily report.
+</footer>
+</body>
+</html>

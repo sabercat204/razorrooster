@@ -1,0 +1,125 @@
+# Per-sector keyword catalogue for the Kalshi sector heuristic mapper
+# (T-KSI-050; design §3.5; OQ-KSI-001 resolution).
+#
+# Kalshi's catalog is heavier on concrete macroeconomic releases, regulatory
+# events, climate / weather thresholds, and concrete geopolitical questions
+# than Polymarket's. The keyword sets are tuned accordingly.
+#
+# 'out_of_scope' captures Sports / Entertainment / daily-life markets
+# Kalshi runs that have no Razor-sector analogue — they're persisted
+# faithfully but excluded from downstream processing.
+#
+# Operators: extend these lists as triage feedback arrives. DEFER-KSI-001
+# acknowledges this is iterative.
+
+version: 1
+
+sectors:
+  public_health:
+    - "PHEIC"
+    - "CDC"
+    - "FDA approval"
+    - "vaccine"
+    - "outbreak"
+    - "pandemic"
+    - "WHO"
+    - "drug approval"
+    - "epidemic"
+
+  geopolitical:
+    - "election"
+    - "presidential"
+    - "primary"
+    - "approval rating"
+    - "ceasefire"
+    - "war"
+    - "treaty"
+    - "sanctions"
+    - "summit"
+    - "head of state"
+
+  regulatory:
+    - "FDA"
+    - "EPA"
+    - "Congress"
+    - "Senate"
+    - "House"
+    - "executive order"
+    - "Supreme Court"
+    - "rule"
+    - "ruling"
+    - "regulation"
+    - "antitrust"
+
+  commodity:
+    - "oil"
+    - "gas"
+    - "WTI"
+    - "Brent"
+    - "OPEC"
+    - "wheat"
+    - "corn"
+    - "copper"
+    - "gold"
+    - "silver"
+    - "natural gas"
+
+  climate:
+    - "hurricane"
+    - "tropical storm"
+    - "tornado"
+    - "snowfall"
+    - "rainfall"
+    - "temperature"
+    - "drought"
+    - "wildfire"
+    - "El Niño"
+    - "La Niña"
+    - "ENSO"
+
+  infrastructure_energy:
+    - "blackout"
+    - "grid"
+    - "refinery"
+    - "pipeline"
+    - "outage"
+    - "power"
+    - "electricity"
+    - "renewable"
+
+  macroeconomic:
+    - "CPI"
+    - "PPI"
+    - "Fed"
+    - "FOMC"
+    - "GDP"
+    - "unemployment"
+    - "jobs report"
+    - "rate cut"
+    - "rate hike"
+    - "interest rate"
+    - "inflation"
+    - "recession"
+    - "yield"
+    - "treasury"
+
+  cross_cutting:
+    - "global"
+    - "international"
+    - "multilateral"
+
+  out_of_scope:
+    - "Super Bowl"
+    - "World Cup"
+    - "NFL"
+    - "NBA"
+    - "MLB"
+    - "NHL"
+    - "Oscar"
+    - "Emmy"
+    - "Grammy"
+    - "championship"
+    - "playoff"
+    - "draft"
+    - "Eurovision"
+    - "Billboard"

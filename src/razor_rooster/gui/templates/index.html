@@ -1,0 +1,71 @@
+{% extends "_base.html" %}
+{% block title %}Dashboard &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Dashboard</h2>
+
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="label">Reports (last 7 d)</div>
+        <div class="value">{{ stats.report_count_7d }}</div>
+    </div>
+    <div class="summary-card {% if stats.cycles_with_failures %}warn{% endif %}">
+        <div class="label">Cycles with failures (7 d)</div>
+        <div class="value">{{ stats.cycles_with_failures }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Avg sections rendered</div>
+        <div class="value">{{ "%.1f"|format(stats.avg_sections_rendered) if stats.avg_sections_rendered is not none else "&mdash;" | safe }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="label">Library version</div>
+        <div class="value">{{ stats.library_version if stats.library_version is not none else "&mdash;" | safe }}</div>
+    </div>
+</div>
+
+<h3>Most recent reports</h3>
+{% if recent_reports %}
+<table>
+<thead>
+<tr>
+    <th>Generated at</th>
+    <th>Report ID</th>
+    <th class="num">Sections</th>
+    <th class="num">Failed</th>
+    <th class="num">Terminal chars</th>
+    <th>Outputs</th>
+</tr>
+</thead>
+<tbody>
+{% for r in recent_reports %}
+<tr>
+    <td><a href="/reports/{{ r.report_id }}">{{ r.generated_at.isoformat() }}</a></td>
+    <td><code>{{ r.report_id }}</code></td>
+    <td class="num">{{ r.sections_rendered|length }}/{{ r.sections_enabled|length }}</td>
+    <td class="num">
+        {% if r.sections_failed|length %}
+            <span class="pill warn">{{ r.sections_failed|length }}</span>
+        {% else %}
+            0
+        {% endif %}
+    </td>
+    <td class="num">{{ r.rendered_terminal_text|length }}</td>
+    <td>
+        {% if r.markdown_path %}<span class="pill">md</span>{% endif %}
+        {% if r.html_path %}<span class="pill">html</span>{% endif %}
+    </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">No reports persisted yet. Run <code>razor-rooster report generate</code> to produce one.</div>
+{% endif %}
+
+<h3>Quick links</h3>
+<p>
+    <a href="/reports">All reports</a> &middot;
+    <a href="/digest">Digest (sortable)</a> &middot;
+    <a href="/compare">Compare two reports</a> &middot;
+    <a href="/calibration">Calibration log</a>
+</p>
+{% endblock %}

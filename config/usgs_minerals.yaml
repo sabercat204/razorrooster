@@ -1,0 +1,24 @@
+# USGS Mineral Commodity Summaries connector configuration (T-056).
+#
+# Each entry is a CSV download representing one year of mineral
+# commodity data. Run annually after USGS publishes the new edition
+# (typically late January / early February of each year).
+
+version: 1
+
+editions:
+  # Operator adds entries here as new editions publish.
+  # Format:
+  #   - year: 2024
+  #     url: "https://pubs.usgs.gov/periodicals/mcs2024/mcs2024.csv"
+  #     title: "Mineral Commodity Summaries 2024"
+  #     commodity_column: "Commodity"
+  #     metric_columns: ["Production_2023", "Imports_2023", "Reserves"]
+  - year: 2024
+    url: "https://pubs.usgs.gov/periodicals/mcs2024/mcs2024.csv"
+    title: "USGS Mineral Commodity Summaries 2024"
+    commodity_column: commodity
+    metric_columns:
+      - production
+      - imports
+      - reserves

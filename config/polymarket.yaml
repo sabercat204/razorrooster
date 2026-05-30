@@ -1,0 +1,37 @@
+# Razor-Rooster polymarket_connector configuration (T-PMC-002; design §4).
+#
+# Loaded at connector startup and validated by Pydantic. Invalid values
+# fail fast with a clear error.
+
+version: 1
+
+sync:
+  markets:
+    cadence: daily
+    time_of_day: "08:30"
+  prices:
+    default_cadence: hourly
+    minimum_interval_seconds: 60
+    watched_markets: []                 # populated by mispricing_detector or operator
+  resolutions:
+    cadence: daily
+    time_of_day: "08:45"
+  trades:
+    cadence: daily                      # only runs against watched_markets
+    time_of_day: "09:00"
+
+rate_limit:
+  bucket_capacity: 50                   # 50% of Polymarket's 100 req/sec firm-wide cap
+  refill_per_second: 50.0
+  backoff_base_seconds: 1.0
+  backoff_max_seconds: 60.0
+  max_retries: 5
+
+freshness:
+  markets_threshold_seconds: 172800     # 48h
+  prices_threshold_seconds: 21600       # 6h
+  resolutions_threshold_seconds: 172800
+
+sector_mapping:
+  heuristic_version: 1
+  keywords_file: "config/sector_keywords.yaml"

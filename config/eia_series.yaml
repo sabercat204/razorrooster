@@ -1,0 +1,32 @@
+# EIA series ingested by the EIA connector (T-061).
+#
+# Each entry references one of EIA's v2 API series. The route maps to
+# the EIA URL path (e.g., petroleum/pri/spt for spot prices).
+
+version: 1
+
+series:
+  - id: PET.RWTC.D
+    route: "petroleum/pri/spt"
+    facets:
+      product: ["EPCWTI"]
+      duoarea: ["RCRR"]
+    title: "WTI Crude Oil Spot Price"
+    frequency: D
+    units: usd_per_barrel
+
+  - id: NG.RNGWHHD.D
+    route: "natural-gas/pri/fut"
+    facets:
+      series: ["RNGWHHD"]
+    title: "Henry Hub Natural Gas Spot Price"
+    frequency: D
+    units: usd_per_mmbtu
+
+  - id: TOTAL.MEISCMUS.M
+    route: "total-energy"
+    facets:
+      msn: ["MEISCMUS"]
+    title: "Motor gasoline supplied (M barrels/day)"
+    frequency: M
+    units: million_barrels_per_day

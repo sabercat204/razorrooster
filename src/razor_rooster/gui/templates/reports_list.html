@@ -1,0 +1,56 @@
+{% extends "_base.html" %}
+{% block title %}Reports &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>All reports</h2>
+
+<form class="filter-form" method="get" action="/reports">
+    <label>Since (ISO 8601)
+        <input type="text" name="since" value="{{ filters.since or '' }}" placeholder="2026-05-01">
+    </label>
+    <label>Limit
+        <input type="number" name="limit" value="{{ filters.limit }}" min="1" max="500">
+    </label>
+    <button type="submit">Apply</button>
+</form>
+
+{% if reports %}
+<table>
+<thead>
+<tr>
+    <th>Generated at</th>
+    <th>Report ID</th>
+    <th class="num">Sections</th>
+    <th class="num">Failed</th>
+    <th class="num">Terminal chars</th>
+    <th>Outputs</th>
+    <th>View</th>
+</tr>
+</thead>
+<tbody>
+{% for r in reports %}
+<tr>
+    <td>{{ r.generated_at.isoformat() }}</td>
+    <td><code>{{ r.report_id }}</code></td>
+    <td class="num">{{ r.sections_rendered|length }}/{{ r.sections_enabled|length }}</td>
+    <td class="num">
+        {% if r.sections_failed|length %}<span class="pill warn">{{ r.sections_failed|length }}</span>{% else %}0{% endif %}
+    </td>
+    <td class="num">{{ r.rendered_terminal_text|length }}</td>
+    <td>
+        {% if r.markdown_path %}<span class="pill">md</span>{% endif %}
+        {% if r.html_path %}<span class="pill">html</span>{% endif %}
+    </td>
+    <td>
+        <a href="/reports/{{ r.report_id }}">terminal</a>
+        {% if r.rendered_html_text %}
+            &middot; <a href="/reports/{{ r.report_id }}/html">html</a>
+        {% endif %}
+    </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">No reports match the filter.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,22 @@
+# Template-driven calibration verdict text (T-RG-024; OQ-RG-001 resolution).
+#
+# Bands:
+#   - high: predicted probability >= 0.7
+#   - mid:  0.3 <= predicted probability < 0.7
+#   - low:  predicted probability < 0.3
+#
+# Outcomes: yes, no, invalid.
+#
+# Keys are "{band}_{outcome}". The {p} placeholder is filled with the
+# predicted probability rounded to two decimals.
+
+verdicts:
+  high_yes: "Model said {p} → resolved YES; in line with predicted likelihood."
+  high_no: "Model said {p} → resolved NO; this counts against the model's calibration."
+  mid_yes: "Model said {p} → resolved YES; consistent with mid-confidence prediction."
+  mid_no: "Model said {p} → resolved NO; consistent with mid-confidence prediction."
+  low_yes: "Model said {p} → resolved YES; the model assigned low probability, but tail outcomes happen."
+  low_no: "Model said {p} → resolved NO; in line with predicted likelihood."
+  high_invalid: "Model said {p}; market was invalidated, outcome is undefined for calibration."
+  mid_invalid: "Model said {p}; market was invalidated, outcome is undefined for calibration."
+  low_invalid: "Model said {p}; market was invalidated, outcome is undefined for calibration."

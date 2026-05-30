@@ -1,0 +1,20 @@
+# Section header strings (T-RG-001; design §3.6).
+#
+# Used by both the terminal renderer (uppercased with ASCII rule) and
+# the markdown renderer (## heading).
+
+sections:
+  header: "Report"
+  system_health: "System Health"
+  surfaced: "Surfaced Comparisons"
+  watched: "Active Watched Situations"
+  calibration: "Calibration Log"
+  watchlist: "Watchlist (Developing)"
+  footer: "Disclaimer"
+
+empty_messages:
+  system_health: "No system-health warnings this cycle."
+  surfaced: "No comparisons surfaced this cycle."
+  watched: "No watched analyses required review this cycle."
+  calibration: "No new resolutions this cycle."
+  watchlist: "No unmapped candidates this cycle."

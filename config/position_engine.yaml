@@ -1,0 +1,55 @@
+# Position engine configuration (POSITION_ENGINE_DESIGN.md §3).
+#
+# Tunes the per-sector liquidity-feasibility threshold and the
+# long-time-to-resolution threshold. Bankroll configuration itself
+# (analytical_bankroll_usd, max_single_position_pct, etc.) lives in
+# the bankroll_config table and is set via the CLI; defaults below
+# are only the initial seed values.
+
+version: 1
+
+# Bankroll-config seed values used when no row exists in bankroll_config.
+bankroll_defaults:
+  analytical_bankroll_usd: 1000.0
+  max_single_position_pct: 0.05      # 5% hard cap
+  kelly_fraction_default: 0.5        # half-Kelly conservative
+  min_edge_threshold: 0.03           # below 3% delta = sub-noise
+
+# Bankroll-config validation bounds (OQ-PE-001 resolution).
+bankroll_validation:
+  kelly_fraction_default_min: 0.0
+  kelly_fraction_default_max: 0.5    # never above half-Kelly
+  max_single_position_pct_min: 0.0
+  max_single_position_pct_max: 0.25  # never above 25% even if operator tries
+  min_edge_threshold_min: 0.0
+  min_edge_threshold_max: 0.5
+
+# Liquidity-feasibility threshold (REQ-PE-CMP-006). Suggested dollar
+# size as a percentage of market 24h volume; values above this trigger
+# the low_liquidity flag and clamp the suggested fraction.
+liquidity_feasibility:
+  default_pct_of_24h_volume: 0.05    # 5% of 24h volume
+  per_sector:
+    public_health: 0.05
+    geopolitical: 0.05
+    regulatory: 0.10                 # smaller markets, higher tolerance
+    commodity: 0.05
+    climate: 0.10
+    infrastructure_energy: 0.05
+    macroeconomic: 0.05
+    cross_cutting: 0.05
+
+# Long-time-to-resolution threshold in days (OQ-PE-003 resolution).
+# Markets resolving further out get the long_time_to_resolution flag.
+long_resolution_days_threshold: 365
+
+# Sensitivity-analysis perturbations (OQ-PE-004 resolution).
+sensitivity_perturbations:
+  - 0.10
+  - 0.20
+
+# Bankroll-survival scenario step counts (REQ-PE-CMP-005).
+bankroll_survival_scenarios:
+  - 1
+  - 3
+  - 5

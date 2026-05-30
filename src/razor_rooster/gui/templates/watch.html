@@ -1,0 +1,122 @@
+{% extends "_base.html" %}
+{% block title %}Watch status &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Watch status</h2>
+<p class="muted">
+    Operator-controlled watch state for position-engine analyses and
+    monitor follow-ups. The GUI is read-only; mark / dismiss /
+    acted-on / expired transitions flow through the CLI.
+</p>
+
+<h3>Watched analyses</h3>
+<p class="muted">
+    Counts:
+    {% for state in watched_states_order -%}
+        <span class="watched-count watched-count-{{ state }}">
+            <code>{{ state }}</code>: {{ watched_counts[state] }}
+        </span>{{ ", " if not loop.last else "" }}
+    {%- endfor %}
+</p>
+
+{% set total_watched = watched_counts.values() | sum %}
+{% if total_watched == 0 %}
+<div class="empty">
+    No watched analyses yet. Run
+    <code>razor-rooster position-engine mark &lt;analysis_id&gt; --watching</code>
+    to start tracking an analysis.
+</div>
+{% else %}
+{% for state in watched_states_order %}
+{% set rows = watched_by_state[state] %}
+{% if rows %}
+<details open class="watched-state-block watched-state-{{ state }}">
+<summary><code>{{ state }}</code> &mdash; {{ rows | length }}</summary>
+<table>
+<thead>
+<tr>
+    <th>Analysis ID</th>
+    <th>Class</th>
+    <th>Venue</th>
+    <th class="num">Model p</th>
+    <th class="num">Market p</th>
+    <th class="num">Suggested $</th>
+    <th>Set at</th>
+    <th>Set by</th>
+    <th>Notes</th>
+</tr>
+</thead>
+<tbody>
+{% for row in rows %}
+<tr>
+    <td><code>{{ row.analysis_id }}</code></td>
+    <td>{{ row.analysis.class_id if row.analysis else "—" }}</td>
+    <td>{{ row.analysis.venue if row.analysis else "—" }}</td>
+    <td class="num">
+        {%- if row.analysis -%}
+            {{ "%.3f"|format(row.analysis.model_probability) }}
+        {%- else -%}—{%- endif -%}
+    </td>
+    <td class="num">
+        {%- if row.analysis and row.analysis.market_probability is not none -%}
+            {{ "%.3f"|format(row.analysis.market_probability) }}
+        {%- else -%}—{%- endif -%}
+    </td>
+    <td class="num">
+        {%- if row.analysis -%}
+            ${{ "%.2f"|format(row.analysis.suggested_dollar_size) }}
+        {%- else -%}—{%- endif -%}
+    </td>
+    <td>{{ row.set_at.isoformat() }}</td>
+    <td>{{ row.set_by }}</td>
+    <td>{{ row.notes or "" }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</details>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<h3>Recent threshold-tuning entries</h3>
+{% if tuning_log %}
+<table>
+<thead>
+<tr>
+    <th>Applied at</th>
+    <th>Knob</th>
+    <th>Measurement</th>
+    <th class="num">Previous</th>
+    <th class="num">New</th>
+    <th>Note</th>
+</tr>
+</thead>
+<tbody>
+{% for entry in tuning_log %}
+<tr>
+    <td>{{ entry.applied_at.isoformat() }}</td>
+    <td><code>{{ entry.knob }}</code></td>
+    <td>{{ entry.measurement_kind }}</td>
+    <td class="num">{{ entry.previous_value }}</td>
+    <td class="num">{{ entry.new_value }}</td>
+    <td>{{ entry.note or '' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">
+    No threshold-tuning history yet. Run
+    <code>razor-rooster report suggest-thresholds --apply</code> after a few
+    cycles to record changes here.
+</div>
+{% endif %}
+
+<p class="muted">
+    To make a watch transition, use
+    <code>razor-rooster position-engine mark &lt;analysis_id&gt;
+    --watching | --acted-on | --dismissed</code>
+    in your shell. The system itself appends an <code>expired</code>
+    row when an analysis crosses its expiration window.
+</p>
+{% endblock %}
