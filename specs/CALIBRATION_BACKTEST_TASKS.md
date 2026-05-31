@@ -196,25 +196,42 @@ Task IDs prefixed `T-CB-NNN`.
 ### T-CB-014 — Implement freezer engine with source_publication_ts guards
 **Depends on:** Phase 1 (T-CB-001..T-CB-006), Phase 2 (T-CB-007..T-CB-013).
 **References:** REQ-CB-FREEZE-001, OQ-CB-001, design §3.5.
+
+> **Scout amendment (2026-05-31):** `data_ingest` does NOT expose per-source observation tables. It uses 4 canonical tables (`time_series`, `event_stream`, `document_docket`, `geospatial_indicator`) discriminated by `source_id`. Of the design's named sources (bls_jolts, bls_ces, bea_personal_income, fred, census_retail), only `fred` is registered today; BLS/BEA/Census connectors are deferred. Freezer queries canonical tables.
+
 **Deliverables:**
 - `engines/freezer.py` extended with `freezer.freeze(prediction_ts) -> Optional[FrozenState]` entry point.
-- `FrozenState` dataclass carrying `(source_publication_ts_boundary, frozen_flag)`; returns `None` when any precursor source lacks `source_publication_ts`.
-- WHERE-clauses on `data_ingest` source tables filter `source_publication_ts <= prediction_ts` (REQ-CB-FREEZE-001).
+- `FrozenState` dataclass carrying `(source_publication_ts_boundary, frozen_flag, registered_sources: frozenset[str])`; returns `None` when any precursor source lacks `source_publication_ts`.
+- Discover registered source_ids dynamically by querying the `sources` operational table — do not hard-code names. All canonical-schema sources inherit `source_publication_ts` from the provenance prefix, so the column-presence check is implicit for canonical tables.
+- WHERE-clauses on canonical tables: `SELECT ... FROM time_series WHERE source_id IN (:registered_sources) AND source_publication_ts <= :prediction_ts AND superseded_at IS NULL` (and analogous queries on `event_stream`, `document_docket`, `geospatial_indicator` for hot-path canonical schemas).
+- Add migration `m6003_freezer_indexes` creating `idx_time_series_source_publication_ts ON time_series (source_publication_ts DESC, source_id)` plus analogues on the other canonical tables to keep `freeze()` under the 500ms budget on multi-million-row corpora.
+- Document in `freezer.py` module docstring: BLS, BEA, Census coverage is deferred until those connectors land in `data_ingest`; tests use `fred` plus mocked `source_id` rows to exercise the freeze logic.
 **Verification:**
-- Unit test: synthetic source rows at varied timestamps; no row with `source_publication_ts > prediction_ts` enters frozen state.
-- Unit test: legacy precursor source lacking `source_publication_ts` → `freeze()` returns `None`.
+- Unit test: synthetic `time_series` rows at varied timestamps; no row with `source_publication_ts > prediction_ts` enters frozen state (boundary equality preserved).
+- Unit test: register a synthetic source whose canonical-schema metadata simulates a missing-column scenario → `freeze()` returns `None` with structured log `source_data_not_frozen`.
+- Performance test: seed 1M rows across 5 source_ids; assert `freeze()` p95 latency ≤ 500ms with the new indexes in place.
 **Out of scope:** orchestration wrapper (T-CB-017).
 
 ### T-CB-015 — Implement polarity resolution with comparison_resolutions preference
 **Depends on:** Phase 1, Phase 2.
 **References:** REQ-CB-REPLAY-003, OQ-CB-002, OQ-CB-005, design §3.5.
+
+> **Scout amendment (2026-05-31):** `comparison_resolutions` lacks `class_id` (must derive via FK on `comparison_id` to the `comparisons` table) and the polarity tier queries must filter `venue` and `removed_at IS NULL` and `resolution_outcome != 'invalid'`. Tier 1 ordering is correctness-critical: ASC (earliest resolution after `prediction_ts`) — not DESC.
+
 **Deliverables:**
-- `engines/polarity.py` with `polarity.resolve(prediction_ts, condition_id, class_id) -> tuple[str, str]` returning `(polarity_value, source)`.
-- Step 1: query `comparison_resolutions` for `(condition_id, class_id)`; on hit return `(polarity_at_comparison, 'comparison_resolutions')`.
-- Step 2: fall back to current `class_market_mappings` row; on hit return `(polarity, 'current_mapping_fallback')` and prepare `mapping_mismatch_warning=True` for the caller.
-- Step 3: raise `NoPolarityError` when neither path resolves; caller catches and inserts skip with `reason='no_polarity_resolution'`.
-- `NoPolarityError` defined in `errors.py`.
-**Verification:** unit tests cover all three paths (comparison_resolutions hit, mapping fallback, unresolved) with synthetic fixtures.
+- `engines/polarity.py` with `polarity.resolve(conn, prediction_ts, condition_id, class_id, *, venue: str = 'polymarket') -> tuple[str, str]` returning `(polarity_value, source)`.
+- **Tier 1 (comparison_resolutions):** `SELECT cr.polarity_at_comparison FROM comparison_resolutions cr JOIN comparisons c USING (comparison_id) WHERE c.condition_id = ? AND c.class_id = ? AND cr.venue = ? AND cr.resolution_ts > ? AND cr.resolution_outcome != 'invalid' ORDER BY cr.resolution_ts ASC LIMIT 1`. On hit return `(polarity_at_comparison, 'comparison_resolutions')`.
+- **Tier 2 (current_mapping_fallback):** `SELECT polarity FROM class_market_mappings WHERE class_id = ? AND condition_id = ? AND venue = ? AND removed_at IS NULL`. On hit return `(polarity, 'current_mapping_fallback')`; caller sets `mapping_mismatch_warning=True`.
+- **Tier 3:** raise `NoPolarityError(prediction_ts=..., condition_id=..., class_id=...)`; caller catches and inserts skip with `reason='no_polarity_resolution'`.
+- `NoPolarityError` defined in `errors.py` (already present from Phase 1; verify signature accepts kwargs).
+**Verification:**
+- Unit test: Tier 1 hit when `comparison_resolutions` row exists for `(condition_id, class_id, venue)` with `resolution_ts > prediction_ts`.
+- Unit test: Tier 2 hit when no `comparison_resolutions` row but `class_market_mappings` row exists with `removed_at IS NULL`.
+- Unit test: Tier 3 raises when neither tier resolves.
+- **Ordering test (correctness-critical):** seed 3+ resolutions for the same `(condition_id, class_id, venue)` at varied `resolution_ts` values, assert `resolve()` returns the polarity from the **earliest** `resolution_ts > prediction_ts` row.
+- Test: `removed_at IS NOT NULL` rows in Tier 2 are excluded.
+- Test: `resolution_outcome = 'invalid'` rows in Tier 1 are excluded (no phantom polarities).
+- Test: cross-venue collision (Polymarket+Kalshi same `condition_id`) — `venue` filter prevents pollution.
 **Out of scope:** orchestration wiring (T-CB-018).
 
 ### T-CB-016 — Implement lag enforcement and derive_prediction_ts
@@ -232,12 +249,24 @@ Task IDs prefixed `T-CB-NNN`.
 ### T-CB-017 — Implement evaluate_class_at_frozen_time orchestration wrapper
 **Depends on:** Phase 1.
 **References:** REQ-CB-REPLAY-002, OQ-CB-001, design §3.5.
+
+> **Scout amendment (2026-05-31):** `signal_scanner.engines.posterior.posterior_with_ci()` is public and reusable unchanged ✓. But `_evaluate_precursors()` is **private** (underscore prefix) and hard-codes its lookback window to `[scan_started_at - 30d, scan_started_at]` with no `as_of_ts` parameter. To preserve D1's "reuse unchanged" principle and avoid drift, expose precursor evaluation as a public wrapper in signal_scanner first.
+
+**Prerequisite sub-task (signal_scanner):**
+- Add public function `signal_scanner.engines.posterior.evaluate_precursors_at_time(store, cls, signatures, as_of_ts: datetime, lookback_days: int = 30) -> tuple[dict[str, float | None], bool]` that wraps the existing `_evaluate_precursors` logic but accepts `as_of_ts` in place of `scan_started_at` and adds `WHERE source_publication_ts <= as_of_ts` to all underlying precursor queries. Export from `signal_scanner.engines.posterior.__all__`.
+- Contract test: with `as_of_ts == now` and a fixed corpus, `evaluate_precursors_at_time(...)` returns the **same** `current_values` dict as the live scanner path (`_evaluate_precursors` via `scanner.run_scan()`). This locks in non-divergence.
+
 **Deliverables:**
-- `engines/replay.py::evaluate_class_at_frozen_time(class_id, prediction_ts, frozen) -> tuple[float, dict]` that threads `frozen.source_publication_ts_boundary` into the precursor evaluation layer; calls `signal_scanner.engines.posterior.posterior_with_ci()` directly (per OQ-CB-001) without reusing `scanner.run_scan()`.
+- `engines/replay.py::evaluate_class_at_frozen_time(class_id, prediction_ts, frozen) -> tuple[float, dict]` that:
+  1. Calls `signal_scanner.engines.posterior.evaluate_precursors_at_time(store, cls, cls.signatures, as_of_ts=prediction_ts)` to obtain a frozen `current_values` dict.
+  2. Calls `signal_scanner.engines.posterior.posterior_with_ci(base_rate=..., signatures=cls.signatures, current_values=current_values, ...)` (unchanged, per OQ-CB-001).
+  3. Extracts `model_p = posterior_result.posterior` (the float scalar; the rest of `PosteriorResult` is not needed).
 - Returns `(model_p, trace)` where `trace` is the dict representation of scanner's Trace object.
-- Raises `InsufficientPrecursorData` if precursor evaluation yields fewer rows than `cls.min_support`; caller skips with `reason='insufficient_data'`.
+- Raises `InsufficientPrecursorData` if `evaluate_precursors_at_time` yields fewer rows than `cls.min_support`; caller skips with `reason='insufficient_data'`.
 - `InsufficientPrecursorData` defined in `errors.py`.
-**Verification:** unit test mocks `signal_scanner.posterior` and confirms wrapper passes `frozen_state` correctly and returns `model_p` plus trace.
+**Verification:**
+- Unit test mocks `signal_scanner.posterior` and confirms wrapper passes `prediction_ts` as `as_of_ts` and returns `model_p` plus trace.
+- Contract test (anti-divergence): asserts the live-scan and backtest-with-as_of_ts=now paths produce identical `current_values` dicts on a fixed corpus.
 **Out of scope:** loop orchestration (T-CB-018).
 
 ### T-CB-018 — Implement main replay loop with resolution enumeration
@@ -559,15 +588,19 @@ Task IDs prefixed `T-CB-NNN`.
 ### T-CB-042 — Implement polymarket_resolution_calibration._occurrences SQL query
 **Depends on:** Phase 1 (T-CB-001..T-CB-006).
 **References:** REQ-CB-PL-001, design §3.16, OQ-CB-002, OQ-CB-005.
+
+> **Scout amendment (2026-05-31):** `comparison_resolutions` does NOT have a `class_id` column — it must be derived by joining through the `comparisons` table on `comparison_id`. The query is therefore a **three-table** join, not two. Note: until `mispricing_detector` linkage matures, some predictions may not flow into `comparison_resolutions`; treat coverage as expected partial, not a defect.
+
 **Deliverables:**
 - `pattern_library/classes/polymarket_resolution_calibration.py::_occurrences` replaces the empty-frame stub with a real DuckDB query.
-- Joins `comparison_resolutions cr` to `polymarket_resolutions pr` on `pr.condition_id = cr.condition_id`.
-- Filters by `resolution_ts BETWEEN :since_ts AND :until_ts`, `pr.invalidated = FALSE`, `cr.class_id = :class_id`.
-- Selects `cr.condition_id`, `cr.class_id`, `cr.polarity_at_comparison`, `pr.outcome`, `pr.resolution_ts`, `pr.invalidated`.
+- **Three-table join:** `comparison_resolutions cr JOIN comparisons c USING (comparison_id) JOIN polymarket_resolutions pr USING (condition_id)`.
+- Filters: `pr.resolution_ts BETWEEN :since_ts AND :until_ts`, `pr.invalidated = FALSE`, `c.class_id = :class_id`, `pr.superseded_at IS NULL`.
+- Selects: `c.condition_id`, `c.class_id`, `cr.polarity_at_comparison`, `pr.winning_outcome_label`, `pr.resolution_ts AS occurrence_ts`, `pr.invalidated`.
 - Computes `(model_p, observed)` pair using `polarity_at_comparison` per design §3.16.
 - Returns DataFrame with the documented column set.
 - Empty-frame fallback removed.
-**Verification:** seeded fixture produces non-empty DataFrame; column set matches spec.
+- Module docstring documents linkage-coverage caveat (some comparisons may lack `comparison_resolutions` rows until linkage pass matures — partial coverage is expected, not a defect).
+**Verification:** seeded fixture produces non-empty DataFrame; column set matches spec; `class_id` correctly derived from `comparisons` table.
 **Out of scope:** test fixture (T-CB-043).
 
 ### T-CB-043 — Add unit test for polymarket_resolution_calibration._occurrences upgrade
