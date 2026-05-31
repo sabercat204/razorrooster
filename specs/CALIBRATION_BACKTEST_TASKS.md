@@ -475,30 +475,55 @@ Task IDs prefixed `T-CB-NNN`.
 
 ## Phase 5 — CLI
 
-### T-CB-028 — Scaffold CLI module and run command skeleton
+### T-CB-028 — Scaffold CLI module, register subgroup, and add mypy strict override
 **Depends on:** Phase 1 (T-CB-001..T-CB-006), Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027).
 **References:** REQ-CB-CLI-001, design §3.9.
+
+> **Scout amendment (2026-05-31):** the existing CLI conventions (`razor-rooster <kebab>` group with `_DEFAULT_DB_PATH_ENV = "RAZOR_ROOSTER_DB"` and `_DEFAULT_DB_PATH = Path("data") / "trough.duckdb"`) are well-established in `signal_scanner/cli.py` and `monitor/cli.py`. click is already a hard dep (`pyproject.toml` line 17). Mirror the existing template verbatim. **Critical:** the subgroup definition AND the registration in `src/razor_rooster/cli.py` must land in the SAME commit — registering before the subgroup exists raises ImportError at module load and bricks every other CLI. **calibration_backtest is also missing from the mypy strict overrides** (peer subsystems all have it); add it here so T-CB-034's gate matches the rest of the repo.
+
 **Deliverables:**
-- `razor_rooster/calibration_backtest/cli.py` with module-scope `@click.group()` and `@run.command()` subcommand.
-- CLI decorators wired for `--since`, `--until`, `--lag-days`, `--class-id` (repeatable), `--sector` (repeatable), `--venue` (repeatable), `--bin-count`, `--bin-count-per-sector` (repeatable), `--allow-recent`, `--output` (default `terminal`) per §3.9.
-- Imports `api.run_backtest()` (from Phase 3) and wires the command.
-- `models.py::RunParameters` finalized with `since_ts`, `until_ts`, `lag_days`, `class_ids: list[str]`, `sectors: list[str]`, `venues: list[str]`, `allow_recent: bool`.
-- Run command parses CLI args into `RunParameters` and calls `api.run_backtest(params)`, capturing `BacktestRun`.
-- `__main__.py` entry wiring `razor-rooster calibration-backtest` group.
-**Verification:** `razor-rooster calibration-backtest run --help` shows all flags; `--output` enum validates against `{'terminal', 'markdown', 'html', 'json'}`.
+- Replace the placeholder `src/razor_rooster/calibration_backtest/cli.py` with `@click.group(name="calibration-backtest")` mirroring `signal_scanner/cli.py`:
+  - `_DEFAULT_DB_PATH_ENV = "RAZOR_ROOSTER_DB"`, `_DEFAULT_DB_PATH = Path("data") / "trough.duckdb"`.
+  - `_resolve_db_path(option_value: str | None) -> Path` honoring CLI flag → env var → default.
+  - `_open_store(db_path: Path) -> tuple[duckdb.DuckDBPyConnection, DuckDBStore]` running ALL upstream migrations in dependency order (data_ingest → polymarket_connector → pattern_library → signal_scanner → mispricing_detector → position_engine → calibration_backtest), matching `monitor/cli.py` lines 84-90 verbatim.
+- `@run` subcommand with flags: `--since`, `--until`, `--lag-days`, `--class-id` (repeatable), `--sector` (repeatable), `--venue` (repeatable), `--bin-count`, `--bin-count-per-sector` (repeatable, parsed as `KEY=N`), `--allow-recent`, `--format` (NOT `--output`; mirror `monitor/cli.py` lines 224-235 with `click.Choice(["terminal", "markdown", "html", "json"], case_sensitive=False)` defaulting to `"terminal"`), `--db PATH`.
+- Wire `from razor_rooster.calibration_backtest.engines.replay import run_backtest` (NOT `api.run_backtest` — `api.py` is an empty placeholder; the real entry point is `engines.replay.run_backtest`). Required keyword-only args: `conn`, `store`. Optional `persistence_conn` MUST be passed equal to `conn` to actually persist rows. Returns `ReplayResult` (dataclass with `.run`, `.predictions`, `.traces`); render `result.run` for BacktestRun-shaped output.
+- `models.py::RunParameters` already exists from Phase 3 with `since_ts`, `until_ts`, `lag_days`, `class_ids: list[str]`, `sectors: list[str]`, `venues: list[str]`, `allow_recent: bool`. Confirm `bin_count: int | None` and `bin_count_per_sector: Mapping[str, int]` overrides from T-CB-026 are wired through to RunParameters construction in cli.py.
+- **Register the subgroup in `src/razor_rooster/cli.py`** in the same commit: add `from razor_rooster.calibration_backtest.cli import calibration_backtest` to the imports block (around line 22), and `main.add_command(calibration_backtest)` to the registrations block (around line 48).
+- **Add mypy strict override to `pyproject.toml`** mirroring peer subsystems (around lines 85-119): `[[tool.mypy.overrides]] module = "razor_rooster.calibration_backtest.*" strict = true`.
+- Use exit codes 0=ok, 1=not-found/usage error, 2=hard failure via `click.exceptions.Exit(code=N)` with `click.echo(..., err=True)` for stderr (match `signal_scanner/cli.py` lines 132-136, 173-176).
+**Verification:**
+- `razor-rooster --help` exits 0 (smoke test in `tests/test_cli_entrypoint.py` via CliRunner).
+- `razor-rooster calibration-backtest --help` exits 0 and lists subcommands.
+- `razor-rooster calibration-backtest run --help` shows all flags with correct defaults.
+- `mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest` is a HARD gate per the new override (matches CI's `mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest` step).
 **Out of scope:** rendering (T-CB-029, T-CB-030).
 
-### T-CB-029 — Implement terminal and markdown output formatters
+### T-CB-029 — Implement terminal, markdown, and HTML output formatters (with native SVG)
 **Depends on:** T-CB-028.
 **References:** REQ-CB-CLI-002, design §3.9, §3.12.
+
+> **Scout amendment (2026-05-31):** **report_generator emits NO SVG anywhere** — its only chart helper is `render_chart()` returning an 11×21 ASCII grid wrapped in `<pre>`. The design's "imports report_generator.engines.section_assemblers.reliability to produce bit-equal SVG diagrams" is unimplementable as written. calibration_backtest must render SVG natively. Bit-equality (REQ-CB-SCORE-004 / P-CB-4) applies to the bin-tuple inputs (already parity-locked to `report_generator._equal_width_bins` per T-CB-022), NOT to rendered SVG bytes. **Also:** the framing linter's exception is `ImperativeLanguageDetected` (RuntimeError subclass), not `FramingError`, and its signature is `check_text(text, *, catalog=None, extra_phrases=())` — no `config_path: str` parameter.
+
 **Deliverables:**
-- `razor_rooster/calibration_backtest/renderers.py`.
-- `render_terminal(run: BacktestRun) -> str` formatting: run header (run_id, since_ts, until_ts, lag_days, library_version, system_revision, status), disclaimer block from `calibration_backtest.frame.DISCLAIMER`, prediction counts, overall_brier, per-sector and per-class Brier tables, fallback_polarity rate (with note when >5%).
-- `render_markdown(run: BacktestRun) -> str` mirroring structure with Markdown tables; reliability diagrams as indented code blocks or SVG embeds.
-- `render_html(run: BacktestRun) -> str` generating minimal HTML with embedded CSS; imports `report_generator.engines.section_assemblers.reliability` to produce bit-equal SVG diagrams (REQ-CB-SCORE-004).
-- All three renderers frame text in conditional language only ("would", "could", "might", "if the operator chose"); validated via the linter prior to return.
-- Each renderer calls `position_engine.frame.linter.check_text(text, config_path='config/forbidden_phrases.yaml')` and raises `FramingError` on rejection.
-**Verification:** unit tests for each renderer with synthetic `BacktestRun`; linter integration test confirms rejection of sample forbidden phrases; HTML render produces valid SVG for reliability bins.
+- `razor_rooster/calibration_backtest/renderers.py`:
+  - `render_terminal(run: BacktestRun) -> str` formatting: run header (run_id, since_ts, until_ts, lag_days, library_version, system_revision, status), disclaimer block from `calibration_backtest.frame.DISCLAIMER`, prediction counts, overall_brier, per-sector and per-class Brier tables, fallback_polarity rate (with note when >5%).
+  - `render_markdown(run: BacktestRun) -> str` mirroring structure with Markdown tables; reliability diagrams as indented code blocks (no SVG in markdown — markdown does not render inline SVG reliably across viewers).
+  - `render_html(run: BacktestRun) -> str` generating minimal HTML with embedded CSS using plain string concatenation (mirror `report_generator/renderer/html.py`'s no-template-engine idiom). Embeds inline SVG produced natively by `render_reliability_svg`.
+- `razor_rooster/calibration_backtest/renderers/reliability_svg.py::render_reliability_svg(diagram: ReliabilityDiagram, *, width: int = 320, height: int = 320, padding: int = 32) -> str`:
+  - Returns a complete `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 W H'>...</svg>` string with explicit viewBox so embedding is size-stable.
+  - Axes (two `<line>` at the inner padding rectangle), perfect-calibration y=x diagonal reference (one `<line>` from `(pad, H-pad)` to `(W-pad, pad)`).
+  - Per non-empty bin: one `<rect>` x-positioned at `pad + bin_lo * (W - 2*pad)` with width `(bin_hi - bin_lo) * (W - 2*pad)`; height proportional to `empirical_rate`. Empty / sparse bins (`count == 0`) get `class="sparse"` styling (e.g., `stroke-dasharray`).
+  - Per non-empty bin: one `<circle cx=... cy=... r=3>` at `(mean_predicted_p, empirical_rate)` so the operator can see model-vs-empirical at a glance.
+  - Inline `<style>` inside the SVG so embedded SVG renders correctly when cut/pasted standalone.
+- **Operator-supplied strings** (sector names, axis labels) embedded in `<svg><text>` MUST be HTML-escaped via the same `_html()` escape used in `report_generator/renderer/html.py` to avoid breaking the document. Numeric bin/probability values are safe by construction.
+- All three renderers frame text in conditional language ("would", "could", "might", "if the operator chose"). The linter is denylist-only — it does NOT enforce conditional-voice presence; it rejects imperative phrases via case-insensitive substring match. Tests should assert imperative-phrase rejection only, NOT positive presence of "would/could/might".
+- Each renderer calls `frame.check_cli_framing(text)` (defined in T-CB-033) which wraps `position_engine.frame.linter.check_text(text, catalog=_LINTER_CATALOG)`. The catalog is built ONCE at module import using an absolute Path (NOT relying on `DEFAULT_CATALOG_PATH` which is CWD-relative — silent under-coverage risk). Catches `ImperativeLanguageDetected` (NOT `FramingError`).
+**Verification:**
+- Unit tests for each renderer with synthetic `BacktestRun`.
+- SVG: assert valid `<svg ...>...</svg>` markup; bin-tuple equality (NOT byte-equality) preserved across runs.
+- Linter integration: feed text containing a known forbidden phrase from `config/forbidden_phrases.yaml` and assert `ImperativeLanguageDetected` is raised; assert `.phrase` attribute matches.
+- HTML escape: a sector name containing `<script>` is escaped to `&lt;script&gt;` in the rendered output.
 **Out of scope:** JSON output (T-CB-030).
 
 ### T-CB-030 — Implement JSON output formatter and disclaimer field
@@ -515,48 +540,98 @@ Task IDs prefixed `T-CB-NNN`.
 ### T-CB-031 — Wire run command output formatting and test default-runnable
 **Depends on:** T-CB-028, T-CB-029, T-CB-030.
 **References:** REQ-CB-CLI-001, REQ-CB-CLI-002, design §3.9.
+
+> **Scout amendment (2026-05-31):** the design's `api.run_backtest(params)` does not exist (`api.py` is an empty placeholder). Wire to `engines.replay.run_backtest(params, *, conn, store, persistence_conn=conn)` returning `ReplayResult`. Render `result.run`. No earliest-resolution helper exists for the bare-run default; CLI must issue raw SQL and guard against NULL.
+
 **Deliverables:**
-- `cli.py` run command dispatches to the appropriate renderer based on `--output`.
-- Run command calls `renderers.render_*` with the `BacktestRun` from `api.run_backtest()`; prints to stdout for terminal/markdown/html or writes JSON to stdout.
-- Bare-run defaults: when none of `--since`, `--until`, `--class-id`, `--sector`, `--venue` are provided, defaults to `since_ts = earliest in polymarket_resolutions`, `until_ts = now - 30 days`, `lag_days = 7`, `class_ids = pattern_library.list_classes()`, `sectors = []`, `venues = ['polymarket']`.
-- Integration test running `razor-rooster calibration-backtest run` with zero arguments on a populated test corpus: command exits 0; stdout contains summary; text passes linter.
-- Unit tests for each output format against canned fixtures.
-**Verification:** integration test confirms bare-command works; output rendered; JSON valid with disclaimer.
+- `cli.py` run command dispatches to the appropriate renderer based on `--format` (NOT `--output` — see T-CB-028 amendment).
+- Run command:
+  1. Opens DuckDB conn + DuckDBStore via `_open_store(_resolve_db_path(db_option))`.
+  2. Calls `result = run_backtest(params, conn=conn, store=store, persistence_conn=conn)` — both `conn` and `store` are required keyword-only.
+  3. Renders `result.run` via the dispatched renderer.
+  4. Prints to stdout for terminal/markdown/html; writes JSON to stdout.
+- **Bare-run defaults** (when none of `--since`, `--until`, `--class-id`, `--sector`, `--venue` are provided):
+  - `since_ts`: issue `SELECT MIN(resolution_ts) FROM polymarket_resolutions` directly in cli.py. If NULL (empty table), raise `BacktestConfigError` with operator hint pointing to `razor-rooster ingest` to populate `polymarket_resolutions`.
+  - `until_ts`: `now() - timedelta(days=30)` (the recent-window cutoff per REQ-CB-RUN-002).
+  - `lag_days`: `7` (per `config/backtest.yaml::default_lag_days`).
+  - `class_ids`: from `pattern_library.list_classes()`.
+  - `sectors`: `[]` (all sectors).
+  - `venues`: `['polymarket']`.
+- **Smoke-check before invoking `run_backtest`:** issue a count over `iter_mapped_resolutions(conn, since_ts, until_ts, venues, class_ids)` to fail fast on mis-wired DB paths (zero mapped resolutions → exit code 1 with a clear error message).
+- Integration test: `razor-rooster calibration-backtest run --db /tmp/test.duckdb` against a populated test corpus exits 0; stdout contains expected sections; output passes the framing linter.
+- Unit tests for each `--format` value against canned fixtures.
+**Verification:** integration test confirms bare-command works on a seeded DB; output rendered; JSON valid with disclaimer; bare-run with empty `polymarket_resolutions` raises `BacktestConfigError` with helpful operator hint (NOT a cryptic NULL error).
 **Out of scope:** other subcommands (T-CB-032).
 
 ### T-CB-032 — Implement list, show, compare, and prune CLI commands
 **Depends on:** T-CB-028, T-CB-029.
 **References:** design §3.9.
+
+> **Scout amendment (2026-05-31):** `RunNotFoundError` does not exist in `errors.py` (must be added). No `prune_runs` / `delete_run` helper exists in `persistence.operations`. **Schemas.py explicitly OMITS FK constraints** (DuckDB FK support is limited per the schema comment) — cascade delete WILL NOT work via FKs. Prune must issue 3 ordered DELETEs in a transaction. The `compare_runs` signature additionally accepts a keyword-only `threshold: float | None = None` which can be exposed as `--threshold FLOAT`.
+
 **Deliverables:**
-- `list` command parses `--since ISO`, `--limit N` (default 50); queries `backtest_runs` ordered by `started_at DESC`; renders table with run_id (12-char), started_at, library_version, truncated system_revision, lag_days, prediction counts, overall_brier, fallback_polarity_rate, status; passes through linter.
-- `show` command accepts positional `RUN_ID` and optional `--output FORMAT`; raises `RunNotFoundError` when missing; renders via appropriate formatter.
-- `compare` command accepts positional `RUN_A`, `RUN_B`, optional `--compare-rank-by {absolute|percent}` (default `absolute`), optional `--top N`; calls `engines.compare.compare_runs()` and renders ranked table with sector, class_id, brier_a, brier_b, delta_absolute, delta_percent, crossed_miscalibration_threshold, present_in; passes through linter.
-- `prune` command requires `--before ISO` and `--confirm`; cascade-deletes from `backtest_runs`, `backtest_predictions`, `backtest_traces`; emits row-deletion summary.
-- All non-JSON outputs pass through the linter; conditional language enforced.
-**Verification:** unit tests for each command with synthetic fixtures; integration test against seeded database; `prune` refuses without `--confirm`.
+- `list` command parses `--since ISO`, `--limit N` (default 50); calls `persistence.operations.list_runs(conn, since=..., limit=...)` (returns `tuple[BacktestRun, ...]` ordered `started_at DESC`); renders table with run_id (12-char), started_at, library_version, truncated system_revision, lag_days, prediction counts, overall_brier, fallback_polarity_rate, status; passes through framing linter.
+- `show` command accepts positional `RUN_ID` and optional `--format FORMAT`. Calls `persistence.operations.fetch_run(conn, run_id)` (returns `BacktestRun | None`). If None, raises `RunNotFoundError(run_id)` and exits with code 1.
+- **Add `RunNotFoundError(CalibrationBacktestError)` to `calibration_backtest/errors.py`** with `__init__(self, run_id: str)` storing `self.run_id` and a deterministic message. Re-export from `calibration_backtest/__init__.py.__all__`.
+- `compare` command accepts positional `RUN_A`, `RUN_B`, optional `--compare-rank-by {absolute|percent}` (default `absolute`), optional `--top N`, optional `--threshold FLOAT` (passes through to `compare_runs(..., threshold=...)`). Calls `engines.compare.compare_runs(conn, run_a_id, run_b_id, threshold=...)` then `engines.compare.rank_compare_cells(cells, rank_by=...)`. Renders ranked table with sector, class_id, brier_a, brier_b, delta_absolute, delta_percent, crossed_miscalibration_threshold, present_in; passes through framing linter.
+- `prune` command requires `--before ISO` and `--confirm`. Without `--confirm`, exits 1 with a usage warning (mirror `signal_scanner/cli.py` lines 308-350 verbatim).
+- **Add `prune_run(conn, run_id)` to `persistence/operations.py`** that opens a transaction (`with conn:` — DuckDB context manager auto-commits or rolls back on exception) and issues, in order: `DELETE FROM backtest_traces WHERE run_id = ?`, `DELETE FROM backtest_predictions WHERE run_id = ?`, `DELETE FROM backtest_runs WHERE run_id = ?`. Returns row-counts dict for CLI summary output.
+- `prune` CLI calls `prune_run` for each row matching the `--before` filter, accumulates row counts, prints summary.
+- All non-JSON outputs pass through the linter; rejection raises `ImperativeLanguageDetected` (NOT `FramingError`) and exits with code 2.
+**Verification:**
+- Unit tests for each command with synthetic fixtures.
+- Integration test against seeded database.
+- `prune` refuses without `--confirm` (exit code 1 + warning).
+- Mid-transaction failure injection: assert no orphan trace/prediction rows remain after a failed `prune_run`.
 **Out of scope:** GUI (Phase 6).
 
-### T-CB-033 — Integrate framing linter, build disclaimer constant, and audit CLI compliance
+### T-CB-033 — Build frame module + linter wrapper + CLI compliance audit
 **Depends on:** T-CB-029, T-CB-030, T-CB-032.
 **References:** REQ-CB-CLI-002, REQ-CB-CLI-003, design §3.10, §3.12.
+
+> **Scout amendment (2026-05-31):** the linter signature is `check_text(text, *, catalog=None, extra_phrases=())` raising `ImperativeLanguageDetected` (RuntimeError subclass), NOT `check_text(text, config_path)` raising `FramingError`. **Critical risk:** `DEFAULT_CATALOG_PATH` is CWD-relative; if cwd != repo root and no explicit catalog is passed, `LinterCatalog.from_yaml` silently falls back to a 10-phrase default list instead of the full ~45-phrase YAML — silent under-coverage. Build the catalog ONCE at module import using an absolute Path.
+
 **Deliverables:**
-- `razor_rooster/calibration_backtest/frame.py` with module constant `DISCLAIMER` (exact text from §3.12) and `FOOTER_NOTE` (footer text from §3.12).
-- Helper `check_cli_framing(text: str) -> None` wrapping `position_engine.frame.linter.check_text` and raising `FramingError` on rejection.
-- Renderers include disclaimer block at top of terminal/markdown/html renders.
-- Terminal/markdown append footer note at end; HTML places both in semantic sections with CSS classes.
-- `tests/test_cli_framing.py::test_all_renders_pass_linter` runs all five CLI commands against seeded database, captures outputs, asserts each passes `check_text()`, confirms disclaimer block present, confirms JSON includes disclaimer field.
-**Verification:** linter integration test passes; all command outputs carry expected disclaimer; no forbidden phrases in fixtures.
+- `razor_rooster/calibration_backtest/frame.py` with:
+  - Module constant `DISCLAIMER: str` (exact text from design §3.12).
+  - Module constant `FOOTER_NOTE: str` (footer text from design §3.12).
+  - Module-level `_LINTER_CATALOG: LinterCatalog = LinterCatalog.from_yaml(Path(__file__).resolve().parents[3] / "config" / "forbidden_phrases.yaml")` built once at import time. Path resolves against `<repo>/config/forbidden_phrases.yaml` regardless of CWD.
+  - **Startup assertion:** `assert len(_LINTER_CATALOG.phrases) > 10, "calibration_backtest framing catalog under-loaded; check repo layout"` — fails loudly if the YAML is missing instead of silently under-linting.
+  - Helper `check_cli_framing(text: str) -> None` wrapping `position_engine.frame.linter.check_text(text, catalog=_LINTER_CATALOG)`. Lets `ImperativeLanguageDetected` propagate (do NOT wrap in a calibration_backtest-local exception — the existing exception's `.phrase` and `.snippet` attributes are useful for downstream error reporting; renaming would lose information).
+- All renderers include `DISCLAIMER` block at top of terminal/markdown/html outputs.
+- Terminal/markdown append `FOOTER_NOTE` at end; HTML places both in semantic sections with CSS classes (`<section class="disclaimer">`, `<section class="footer-note">`).
+- `tests/test_cli_framing.py::test_all_renders_pass_linter`:
+  - Runs all five CLI commands (run, list, show, compare, prune) against a seeded database via `CliRunner`.
+  - Captures outputs from each `--format` value.
+  - Asserts each passes `check_cli_framing()` without raising.
+  - Confirms `DISCLAIMER` substring is present in terminal/markdown/html outputs.
+  - Confirms JSON output includes a `"disclaimer": ...` field with the canonical text.
+- `tests/test_cli_framing.py::test_cwd_independence`:
+  - Calls `os.chdir(tmp_path)` before importing renderers.
+  - Asserts `len(frame._LINTER_CATALOG.phrases) > 10` (full YAML loaded, NOT the 10-phrase fallback).
+**Verification:**
+- Linter integration test passes.
+- All command outputs carry expected disclaimer + footer.
+- No forbidden phrases in fixtures.
+- CWD-independence test passes (catches the silent under-coverage regression).
 **Out of scope:** GUI framing (Phase 6).
 
-### T-CB-034 — Run CLI phase verification gates (mypy, ruff, pytest)
+### T-CB-034 — Run CLI phase verification gates (mypy, ruff, pytest, --help smoke)
 **Depends on:** T-CB-028, T-CB-029, T-CB-030, T-CB-031, T-CB-032, T-CB-033.
 **References:** REQ-CB-CLI-001, REQ-CB-CLI-002, REQ-CB-CLI-003.
+
+> **Scout amendment (2026-05-31):** explicit gate matching CI's hard-gate exactly so a Phase-3-style local/CI mismatch cannot recur.
+
 **Deliverables:**
-- `mypy --strict razor_rooster/calibration_backtest/cli.py razor_rooster/calibration_backtest/renderers.py razor_rooster/calibration_backtest/frame.py` clean.
-- `ruff check --select=E,W,F,I` clean across the package; imports sorted.
+- `mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest` clean (matches CI's hard gate verbatim — runs strict against BOTH src and tests).
+- `mypy --strict src/razor_rooster/calibration_backtest/cli.py src/razor_rooster/calibration_backtest/renderers.py src/razor_rooster/calibration_backtest/frame.py` clean (focused subset).
+- `ruff check src tests` clean across the repo; imports sorted.
+- `ruff format --check src tests` clean.
 - Pytest selectors `-k 'test_cli or test_render or test_framing'` green.
 - `tests/test_cli_framing.py` green.
-- `razor-rooster calibration-backtest --help` and `razor-rooster calibration-backtest run --help` execute without errors.
+- `tests/test_cli_entrypoint.py::test_razor_rooster_help_exits_zero` green (smoke-checks the top-level `razor-rooster --help` does not crash from registering calibration-backtest).
+- `razor-rooster calibration-backtest --help` and `razor-rooster calibration-backtest run --help` execute without errors (run via CliRunner in pytest, not bash, so coverage tracking works).
+- Full pytest suite green (no regressions in upstream subsystems from CLI changes).
 **Verification:** all gates green; no type errors; no lint violations; pytest pass rate 100%.
 **Out of scope:** GUI (Phase 6).
 
