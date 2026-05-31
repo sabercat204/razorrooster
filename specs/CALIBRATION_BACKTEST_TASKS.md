@@ -327,73 +327,148 @@ Task IDs prefixed `T-CB-NNN`.
 - Unit test: empty-list edge cases return 0.0 without raising.
 **Out of scope:** reliability bins (T-CB-022).
 
-### T-CB-022 — Implement reliability diagram binning via report_generator reuse
+### T-CB-022 — Implement reliability diagram binning natively (mirroring report_generator's equal-width convention)
 **Depends on:** T-CB-021.
 **References:** REQ-CB-SCORE-004, design §3.6, D6.
+
+> **Scout amendment (2026-05-31):** report_generator does NOT expose a public `compute_bins(pairs, bin_count)` function. Its only public symbol is `assemble(conn, *, since_ts, until_ts, ...)` which is DuckDB-driven and returns a renderer content-dict — not a `ReliabilityDiagram`. The reusable arithmetic (`_equal_width_bins`, `_compute_bin_summaries`) is private. Furthermore, the previous text "equal-probability bins" was factually wrong: report_generator uses **equal-width bins**. calibration_backtest must implement binning natively, mirroring the equal-width convention bit-for-bit, and lock parity via tests against `report_generator._equal_width_bins`.
+
 **Deliverables:**
-- `compute_reliability_diagrams_per_sector(run_id, bin_count_global, bin_count_per_sector) -> dict[str, ReliabilityDiagram]`.
-- For each sector with scored predictions, invoke `report_generator.engines.section_assemblers.reliability.compute_bins()` directly with `(model_p, observed)` pairs grouped by sector. Confirm signature against `REPORT_GENERATOR_DESIGN.md` §3 reliability assembler before integration; if the public signature differs from `compute_bins(pairs, bin_count)`, introduce a thin adapter in `engines/scoring.py` rather than blocking on upstream changes.
-- Pass `bin_count` resolved from `bin_count_per_sector[sector]` if present else `bin_count_global`; match report_generator's binning convention exactly (equal-probability bins).
-- Return dict mapping sector → serializable `ReliabilityDiagram` with bin edges, counts, calibration metrics.
-**Verification:** integration test runs backtest on synthetic corpus overlapping a daily report window; reliability bins match within 1e-9 for all matching sectors.
+- `engines/scoring.py::compute_bins(pairs: Sequence[tuple[float, int]], *, bin_count: int) -> ReliabilityDiagram` implemented natively in calibration_backtest. Do NOT import from `report_generator` (no compatible public API exists; reusable helpers are underscore-private).
+- **Equal-width binning convention** (mirror report_generator exactly): width = `1.0 / bin_count`; bin edges rounded to 4 decimals via `round(i * width, 4)`; bins are half-open `[lo, hi)` except the **last bin** which is closed at 1.0 — a prediction `p == 1.0` lands in the last bin (`is_top_bin` inclusive rule).
+- Empty-bin policy: emit exactly `bin_count` `ReliabilityBin` entries; bins with `count == 0` use `mean_predicted_p=None` and `empirical_rate=None` (compatible with calibration_backtest's `ReliabilityBin` model — no `sparse` field).
+- `compute_reliability_diagrams_per_sector(conn, run_id, bin_count_global, bin_count_per_sector) -> dict[str, ReliabilityDiagram]` queries `backtest_predictions` filtered by `status='scored' AND brier_contribution IS NOT NULL`, groups by `sector`, and calls `compute_bins` per sector with `bin_count_per_sector.get(sector, bin_count_global)`.
+- Return dict mapping sector → serializable `ReliabilityDiagram` with bin edges, counts, mean predicted/empirical rate per bin.
+- Validate `bin_count >= 2` before constructing `ReliabilityDiagram` (the model raises `BacktestConfigError` for `<2`; the loader clamps to `[2,50]` silently — calibration_backtest must guard explicitly).
+**Verification:**
+- **Parity test (regression-critical):** assert calibration_backtest's bin edges equal `report_generator.engines.section_assemblers.reliability._equal_width_bins(bin_count)` for `bin_count in {2, 5, 10, 20}`. This is a private import for test purposes only — production code does NOT import it.
+- **Top-bin boundary test:** pin bin assignment for boundary values `0.0`, `0.1`, `0.5`, `0.9999`, and `1.0` at `bin_count=10` (asserts `1.0` lands in the last bin, not raises an off-by-one error).
+- **4-decimal rounding test:** assert bin edges for `bin_count=3` produce `[0.0, 0.3333, 0.6667, 1.0]` (rounded), not float-noise values like `0.30000000000000004`.
+- **Empty-bin test:** with `pairs = [(0.05, 0), (0.95, 1)]` and `bin_count=10`, assert exactly 10 `ReliabilityBin` entries, with bins 0 and 9 populated and bins 1-8 carrying `count=0`, `mean_predicted_p=None`, `empirical_rate=None`.
+- Integration test: run backtest on synthetic corpus, then assert `len(diagram.bins) == bin_count` for every sector with scored predictions.
 **Out of scope:** summary assembly (T-CB-023).
 
 ### T-CB-023 — Assemble aggregate summary JSON for backtest_runs.summary_json
 **Depends on:** T-CB-021, T-CB-022.
 **References:** REQ-CB-SCORE-001, REQ-CB-SCORE-002, REQ-CB-SCORE-003, REQ-CB-SCORE-004, design §3.6.
+
+> **Scout amendment (2026-05-31):** specify the canonical aggregation function so T-CB-024's compare engine produces zero deltas on self-compare.
+
 **Deliverables:**
-- `aggregate_run_summary(run_id, bin_count_global, bin_count_per_sector) -> ScoreSummary` orchestrating overall, per-sector, per-class Brier and per-sector reliability diagrams.
+- `aggregate_run_summary(conn, run_id, bin_count_global, bin_count_per_sector) -> ScoreSummary` orchestrating overall, per-sector, per-class Brier and per-sector reliability diagrams.
+- **Canonical Brier aggregation:** `per_sector_brier` and `per_class_brier` use `AVG(brier_contribution)` over rows with `status='scored' AND brier_contribution IS NOT NULL`. T-CB-024's compare engine MUST mirror this exact aggregation so a self-compare (`run_a_id == run_b_id`) produces `delta_absolute = 0.0` and `delta_percent = 0.0` for every cell.
 - `models.py::ScoreSummary` extended with: `overall_brier`, `per_sector_brier`, `per_class_brier`, `zero_resolutions_sectors`, `zero_resolutions_classes`, `reliability_diagrams`, `fallback_polarity_rate`, `fallback_polarity_count`.
 - `ScoreSummary.to_json()` using `json.dumps(sort_keys=True)` for determinism.
-- `persistence/operations.py::complete_run(run_id, summary: ScoreSummary)` converts summary to JSON and persists to `backtest_runs.summary_json`.
-**Verification:** unit tests confirm round-trip through JSON serialization/deserialization; `zero_resolutions_*` populated correctly.
+- `persistence/operations.py::complete_run(run_id, summary: ScoreSummary)` converts summary to JSON and persists to `backtest_runs.summary_json` (the existing complete_run from T-CB-019 already accepts a summary_json parameter; this task ensures the ScoreSummary -> JSON conversion is wired in).
+**Verification:**
+- Round-trip JSON serialization/deserialization preserves all fields.
+- `zero_resolutions_*` populated correctly when a sector or class has zero scored predictions.
+- Determinism: identical `ScoreSummary` inputs produce identical `to_json()` output (locked via `sort_keys=True`).
 **Out of scope:** compare engine (T-CB-024).
 
 ### T-CB-024 — Implement compare engine with cell-level delta computation
 **Depends on:** T-CB-023.
 **References:** REQ-CB-SCORE-005, design §3.7, D3.
+
+> **Scout amendment (2026-05-31):** `CompareCell` and the `PresentIn` enum are NOT yet defined in `models.py`. The miscalibration threshold currently lives only in `report_generator`'s config; calibration_backtest must add a local key to avoid runtime coupling to a sibling subsystem.
+
 **Deliverables:**
-- `engines/compare.py::compare_runs(run_a_id, run_b_id, rank_by) -> list[CompareCell]`.
-- Query `backtest_runs` and join `backtest_predictions` for both runs on `(sector, class_id)`; full outer join captures asymmetric cells.
-- Per cell: `brier_a`, `brier_b`, `delta_absolute = brier_b - brier_a`, `delta_percent = 100 * (brier_b - brier_a) / brier_a if brier_a > 0 else None`, `present_in in {'both','a_only','b_only'}`.
-- `crossed_miscalibration_threshold`: load threshold from config; flag `True` only when both `brier_a` and `brier_b` are non-None and `abs(delta_absolute) >= threshold`.
-- `models.py::CompareCell` populated with full field set.
-**Verification:** unit tests: self-compare yields zero deltas; asymmetric cells carry `present_in` flag; threshold crossing flag fires correctly.
+- **Add to `models.py`** (frozen=True, slots=True):
+  - `PresentIn(StrEnum)` with values `BOTH = 'both'`, `A_ONLY = 'a_only'`, `B_ONLY = 'b_only'`.
+  - `CompareCell` dataclass with fields: `sector: str`, `class_id: str`, `brier_a: float | None`, `brier_b: float | None`, `delta_absolute: float | None`, `delta_percent: float | None`, `crossed_miscalibration_threshold: bool | None`, `present_in: PresentIn`, `trace_diff_summary: str | None = None` (None for v1; future trace-diff work would populate it).
+- **Add to `config/backtest.yaml`:** `compare.brier_miscalibration_threshold: 0.25` (mirrors report_generator's name and default but keeps subsystem isolation — do NOT import `report_generator.config.loader` at runtime). Surface it via the existing `BacktestConfig` loader.
+- `engines/compare.py::compare_runs(conn, run_a_id: str, run_b_id: str, *, threshold: float | None = None) -> list[CompareCell]` (rank_by removed from this task — T-CB-025 owns ranking; this returns unsorted cells).
+- **Single SQL CTE pattern** (one round-trip):
+  ```sql
+  WITH a AS (
+    SELECT sector, class_id, AVG(brier_contribution) AS brier_a
+    FROM backtest_predictions
+    WHERE run_id = :run_a_id AND status = 'scored' AND brier_contribution IS NOT NULL
+    GROUP BY sector, class_id
+  ),
+  b AS (... same for run_b_id ...)
+  SELECT
+    COALESCE(a.sector, b.sector) AS sector,
+    COALESCE(a.class_id, b.class_id) AS class_id,
+    a.brier_a, b.brier_b,
+    CASE WHEN a.brier_a IS NOT NULL AND b.brier_b IS NOT NULL THEN b.brier_b - a.brier_a END AS delta_absolute,
+    CASE WHEN a.brier_a IS NOT NULL AND b.brier_b IS NOT NULL AND a.brier_a > 0
+         THEN 100.0 * (b.brier_b - a.brier_a) / a.brier_a END AS delta_percent,
+    CASE WHEN a.brier_a IS NOT NULL AND b.brier_b IS NOT NULL THEN 'both'
+         WHEN a.brier_a IS NOT NULL THEN 'a_only'
+         ELSE 'b_only' END AS present_in
+  FROM a FULL OUTER JOIN b USING (sector, class_id)
+  ORDER BY sector, class_id
+  ```
+- **Aggregation parity:** `AVG(brier_contribution) FILTER status='scored' AND brier_contribution IS NOT NULL` MUST match T-CB-023's `per_sector_brier` aggregation exactly (so self-compare deltas are zero).
+- **Threshold flag (Python layer):** `crossed_miscalibration_threshold = abs(delta_absolute) >= threshold` ONLY when `present_in == 'both'`; otherwise `None`. Threshold defaults to `compare.brier_miscalibration_threshold` from `backtest.yaml` (0.25); CLI/API may override.
+**Verification:**
+- **Self-compare test (correctness-critical):** `compare_runs(conn, run_id, run_id)` returns cells with `delta_absolute == 0.0` and `delta_percent == 0.0` for all cells where `brier_a > 0`; `delta_percent == None` where `brier_a == 0`.
+- Asymmetric cells: cells in run_a but not run_b carry `present_in='a_only'`, `brier_b=None`, `delta_absolute=None`, `delta_percent=None`, `crossed_miscalibration_threshold=None`.
+- Threshold flag fires correctly on `present_in='both'` cells with `abs(delta) >= 0.25`; never fires on asymmetric cells.
+- `delta_percent == None` when `brier_a == 0` (division-by-zero guard).
 **Out of scope:** ranking (T-CB-025).
 
 ### T-CB-025 — Implement compare ranking and sorting by absolute/percent delta
 **Depends on:** T-CB-024.
 **References:** REQ-CB-SCORE-005, design §3.7, D3.
+
+> **Scout amendment (2026-05-31):** clarify None handling in sort keys.
+
 **Deliverables:**
-- `engines/compare.py::rank_compare_cells(cells, rank_by) -> list[CompareCell]`.
-- `rank_by='absolute'`: stable-sort by `abs(delta_absolute)` descending; asymmetric cells (`present_in != 'both'`) at bottom.
-- `rank_by='percent'`: stable-sort by `abs(delta_percent)` descending; asymmetric cells at bottom.
-- Tie-stability preserved across both modes.
-- CLI flag `--compare-rank-by {absolute|percent}` (default `absolute`) routes to this function.
-**Verification:** integration test compares two runs (one cell improves, one degrades); sort order respects flag; asymmetric cells appear at bottom.
+- `engines/compare.py::rank_compare_cells(cells: list[CompareCell], *, rank_by: Literal['absolute','percent']) -> list[CompareCell]`.
+- `rank_by='absolute'`: stable-sort by `abs(delta_absolute)` descending; asymmetric cells (`present_in != 'both'`, where `delta_absolute is None`) sort to the **bottom** in stable order (sort key tuple `(present_in != BOTH, -abs(delta_absolute or 0.0))` or equivalent).
+- `rank_by='percent'`: stable-sort by `abs(delta_percent)` descending; cells with `delta_percent is None` (asymmetric OR `brier_a == 0`) sort to the bottom.
+- Tie-stability preserved across both modes (Python's `sorted` is stable; rely on it).
+- CLI flag `--compare-rank-by {absolute|percent}` (default `absolute`) routes to this function (CLI integration in Phase 5).
+**Verification:**
+- Integration test: 4 cells (2 both-present with different deltas, 1 a_only, 1 b_only); `rank_by='absolute'` orders by `|delta_absolute|` desc, asymmetric cells last; `rank_by='percent'` does the same for `|delta_percent|`.
+- Tie-stability: two cells with identical `|delta_absolute|` retain their input order.
+- None-handling: cells with `delta_absolute=None` or `delta_percent=None` never raise `TypeError` from comparison.
 **Out of scope:** CLI rendering (Phase 5).
 
-### T-CB-026 — Wire bin-count resolution and CLI flags for score aggregation
+### T-CB-026 — Wire bin-count resolution + CLI flags + canonical run_id hash
 **Depends on:** T-CB-021, T-CB-022.
-**References:** REQ-CB-SCORE-004, design §3.6, D6.
+**References:** REQ-CB-SCORE-004, REQ-CB-RUN-001, REQ-CB-RUN-003, design §3.6, D6.
+
+> **Scout amendment (2026-05-31):** use the existing `reliability_bin_count_for_sector` helper rather than dict-traversal; pass an absolute Path to `load_config` (DEFAULT_CONFIG_PATH is relative and CWD-dependent — silent all-defaults bug). Also folds in Phase 3 review advisories E and F (replace placeholder UUID and `system_revision="unversioned"` in `replay.py` with the canonical hash and resolver).
+
 **Deliverables:**
-- `engines/scoring.py::resolve_bin_counts(params: RunParameters) -> tuple[int, dict[str, int]]`.
-- Resolution order: (1) CLI `--bin-count N` and `--bin-count-per-sector S=N`; (2) `report.yaml thresholds.reliability_bin_count_per_sector[sector]`; (3) `report.yaml thresholds.reliability_bin_count`; (4) module default 10.
-- Loads `report.yaml` via `report_generator.config.loader.load_config()`; missing config falls back to module default.
-- `bin_count_global` and `bin_count_per_sector_json` stored on `backtest_runs` row for auditability; excluded from `run_id` hash.
-- CLI `run` command accepts `--bin-count N` and `--bin-count-per-sector SECTOR=N` (repeatable).
-**Verification:** unit tests confirm resolution order; CLI overrides config; missing config falls back gracefully.
+- `engines/scoring.py::resolve_bin_counts(params: RunParameters, *, config_path: Path | None = None) -> tuple[int, dict[str, int]]`.
+- **Resolution order** (highest priority first):
+  1. CLI `--bin-count N` and `--bin-count-per-sector S=N` (carried on `RunParameters`).
+  2. `report.yaml` per-sector via `cfg.thresholds.reliability_bin_count_for_sector(sector)` — this helper already implements the per-sector → global → default(10) fallback chain in one call. Do NOT traverse `cfg.thresholds.reliability_bin_count_per_sector` directly.
+  3. `report.yaml` global via `cfg.thresholds.reliability_bin_count` (covered by the helper above).
+  4. Module default `DEFAULT_BIN_COUNT = 10`.
+- **Path resolution:** accept `config_path: Path | None`; if provided, pass an absolute `Path` to `load_config(path=config_path)`. If omitted, pass an absolute Path resolved against the workspace root (NOT relying on `DEFAULT_CONFIG_PATH` which is relative — it would silently return all-defaults when CLI runs from a different CWD).
+- **Logging:** at startup, log the resolved config path and a warning if the YAML file is missing (the loader does NOT raise — calibration_backtest must distinguish "loaded" from "defaulted").
+- **Validation:** assert `bin_count >= 2` before constructing any `ReliabilityDiagram` (the loader clamps to `[2, 50]` silently; the `ReliabilityDiagram` model raises `BacktestConfigError` for `<2`). For per-sector overrides, validate each.
+- `bin_count_global` and `bin_count_per_sector_json` stored on `backtest_runs` row for auditability; **excluded from `run_id` hash** (per design §3.4 — the hash captures replay-determinism inputs only).
+- CLI `run` command accepts `--bin-count N` and `--bin-count-per-sector SECTOR=N` (repeatable). [CLI surfacing lands in Phase 5; T-CB-026 wires the parameter plumbing.]
+- **Canonical run_id wiring (clears Phase 3 review advisory E):** `engines/replay.py::run_backtest` calls `compute_run_id(params, library_version, system_revision)` instead of `uuid.uuid4().hex` for the `run_id`. The placeholder UUID is removed. `library_version` resolved from `pattern_library.current_version()`; `system_revision` resolved from `version.resolve_system_revision()`.
+- **system_revision wiring (clears Phase 3 review advisory F):** the hard-coded `system_revision="unversioned"` strings in `replay.py` (currently at the IN_PROGRESS and COMPLETE persistence call sites) are replaced with `version.resolve_system_revision()`. The result is captured once at the top of `run_backtest` so it is consistent across the run row's lifecycle.
+**Verification:**
+- Unit test: resolution order — CLI override beats per-sector beats global beats default.
+- Unit test: `--bin-count-per-sector A=5,B=10` parsed into a dict; missing sector falls through to global.
+- Unit test: `load_config(path=missing_path)` returns ReportConfig defaults; calibration_backtest logs a warning and uses module default 10.
+- Unit test: `bin_count=1` raises `BacktestConfigError` BEFORE constructing the diagram.
+- Unit test: `compute_run_id` produces identical hash for two `RunParameters` differing only in `bin_count` (bin counts are excluded from the hash).
+- **Determinism integration test:** running the same `RunParameters` twice produces the same `run_id` (canonical hash, not UUID).
 **Out of scope:** rendering (Phase 5).
 
 ### T-CB-027 — Run Score-aggregation phase verification gates and integration tests
 **Depends on:** T-CB-021, T-CB-022, T-CB-023, T-CB-024, T-CB-025, T-CB-026.
 **References:** REQ-CB-SCORE-001, REQ-CB-SCORE-002, REQ-CB-SCORE-003, REQ-CB-SCORE-004, REQ-CB-SCORE-005, design §3.6, §3.7, D3, D6.
+
+> **Scout amendment (2026-05-31):** explicit determinism assertion on bin edges (4-decimal rounding) so float-noise differences do not break determinism re-run gates.
+
 **Deliverables:**
 - `mypy --strict` clean on `engines/scoring.py`, `engines/compare.py`, and `models.py` additions.
 - `ruff check` and `ruff format` clean on new code.
 - Pytest: `tests/test_scoring.py`, `tests/test_compare.py` green.
 - Integration test executing a full backtest end-to-end, calling `aggregate_run_summary`, and verifying JSON serialization matches schema.
-- Bit-equality integration test against a synthetic window overlapping a daily report; reliability bins match within 1e-9.
+- **Bit-equality integration test:** `compute_bins(pairs, bin_count=10)` bin edges equal `report_generator.engines.section_assemblers.reliability._equal_width_bins(10)` exactly (4-decimal rounding parity).
+- **Determinism re-run gate:** running the same `RunParameters` twice produces (a) identical `run_id` (canonical hash, not UUID — clears Phase 3 advisory E), (b) identical `summary_json` byte-for-byte, (c) identical bin edges across both runs.
 - No regressions in upstream subsystems; no circular dependency introduced.
 **Verification:** all gates green.
 **Out of scope:** CLI surfaces (Phase 5).
