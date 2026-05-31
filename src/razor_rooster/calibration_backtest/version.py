@@ -58,9 +58,27 @@ def get_system_revision() -> str:
     return revision
 
 
+# T-CB-026 / T-CB-002 alias: the design doc and Phase 4 review advisories
+# refer to ``resolve_system_revision``; the bootstrap landed
+# :func:`get_system_revision` first. We keep both names so existing
+# imports continue working while the canonical run-id wiring uses the
+# spec name.
+def resolve_system_revision() -> str:
+    """Return the current git HEAD SHA (alias for :func:`get_system_revision`).
+
+    Provided so callers in the replay loop can reference the spec name
+    (``version.resolve_system_revision()``) without spelling the alias.
+    The behaviour is identical to :func:`get_system_revision`: any
+    failure (missing git binary, non-repo, decode error) yields
+    :data:`SYSTEM_REVISION_FALLBACK` and never raises.
+    """
+    return get_system_revision()
+
+
 __all__ = [
     "CALIBRATION_BACKTEST_VERSION",
     "SUBSYSTEM_VERSION",
     "SYSTEM_REVISION_FALLBACK",
     "get_system_revision",
+    "resolve_system_revision",
 ]

@@ -70,9 +70,11 @@ def _valid_score_summary(**overrides: Any) -> ScoreSummary:
         "overall_brier": 0.21,
         "per_sector_brier": {"public_health": 0.18},
         "per_class_brier": {"flu_h2h": 0.22},
-        "reliability_per_sector": {"public_health": _valid_diagram()},
+        "reliability_diagrams": {"public_health": _valid_diagram()},
         "zero_resolutions_sectors": (),
         "zero_resolutions_classes": (),
+        "fallback_polarity_count": 0,
+        "fallback_polarity_rate": 0.0,
     }
     base.update(overrides)
     return ScoreSummary(**base)
@@ -542,10 +544,12 @@ class TestPublicSurface:
             "BacktestRun",
             "BacktestStatus",
             "BacktestTrace",
+            "CompareCell",
             "CompressionAlgorithm",
             "PolaritySource",
             "PolarityValue",
             "PredictionStatus",
+            "PresentIn",
             "ReliabilityBin",
             "ReliabilityDiagram",
             "RunParameters",

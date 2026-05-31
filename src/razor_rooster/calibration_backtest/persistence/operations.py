@@ -46,6 +46,7 @@ from razor_rooster.calibration_backtest.models import (
     PolaritySource,
     PolarityValue,
     PredictionStatus,
+    ScoreSummary,
     SkipReason,
 )
 from razor_rooster.calibration_backtest.persistence.schemas import (
@@ -300,6 +301,49 @@ def complete_run(
         predictions_skipped=predictions_skipped,
         overall_brier=overall_brier,
         fallback_polarity_count=fallback_polarity_count,
+    )
+
+
+def persist_score_summary(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    summary: ScoreSummary,
+    *,
+    completed_at: datetime,
+    predictions_total: int | None = None,
+    predictions_scored: int | None = None,
+    predictions_skipped: int | None = None,
+) -> None:
+    """Apply the success-path completion using a :class:`ScoreSummary`.
+
+    Thin convenience wrapper around :func:`complete_run` that funnels a
+    :class:`ScoreSummary` (T-CB-023) into the canonical
+    ``backtest_runs.summary_json`` payload alongside the aggregate
+    counters carried on the same row (``overall_brier``,
+    ``fallback_polarity_count``). The row is transitioned
+    ``in_progress -> complete``.
+
+    The summary mapping is produced by :meth:`ScoreSummary.as_mapping`,
+    which sorts every dict so :func:`_dumps_canonical` (which also runs
+    ``sort_keys=True``) emits a byte-identical payload regardless of
+    insertion order — preserving the determinism gate locked at
+    REQ-CB-PERSIST-001.
+
+    Optional counters default to ``None`` and leave the corresponding
+    columns untouched, matching :func:`complete_run` semantics so
+    callers can patch only the values they hold.
+    """
+    complete_run(
+        conn,
+        run_id,
+        status=BacktestStatus.COMPLETE,
+        completed_at=completed_at,
+        summary_json=summary.as_mapping(),
+        predictions_total=predictions_total,
+        predictions_scored=predictions_scored,
+        predictions_skipped=predictions_skipped,
+        overall_brier=summary.overall_brier,
+        fallback_polarity_count=summary.fallback_polarity_count,
     )
 
 
@@ -614,6 +658,7 @@ __all__ = [
     "insert_run",
     "insert_trace",
     "list_runs",
+    "persist_score_summary",
     "run_exists",
     "update_run_status",
 ]
