@@ -31,8 +31,9 @@ read-only mapping without coercing to ``dict``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -106,6 +107,21 @@ class CompressionAlgorithm(StrEnum):
     ZSTD = "zstd"
 
 
+class PresentIn(StrEnum):
+    """Cell presence marker for run-vs-run comparisons (T-CB-024; design §3.7).
+
+    Each :class:`CompareCell` carries a ``present_in`` discriminator
+    indicating whether the underlying ``(sector, class_id)`` cell was
+    observed in run A only, run B only, or both. Asymmetric cells
+    (``A_ONLY`` / ``B_ONLY``) carry ``None`` for the delta fields per
+    REQ-CB-SCORE-005.
+    """
+
+    BOTH = "both"
+    A_ONLY = "a_only"
+    B_ONLY = "b_only"
+
+
 @dataclass(frozen=True, slots=True)
 class ReliabilityBin:
     """One bin of a reliability diagram (design §3.6).
@@ -171,18 +187,30 @@ class ScoreSummary:
     """Aggregated scoring outputs returned by the scoring engine (design §3.6).
 
     Bundles the overall Brier score with per-sector and per-class Brier
-    breakdowns and the per-sector reliability diagrams. Sectors and
-    classes that produced zero scoreable resolutions are surfaced via
-    ``zero_resolutions_sectors`` / ``zero_resolutions_classes`` so the
-    renderer can flag them in operator-facing output (REQ-CB-RENDER-002).
+    breakdowns, the per-sector reliability diagrams, and the
+    fallback-polarity provenance counters surfaced by the run-summary
+    header (design §3.4). Sectors and classes that produced zero
+    scoreable resolutions are reported via ``zero_resolutions_sectors``
+    / ``zero_resolutions_classes`` so the renderer can flag them in
+    operator-facing output (REQ-CB-RENDER-002).
+
+    The persisted ``backtest_runs.summary_json`` payload is produced by
+    :meth:`to_json`; the same structure is available as a plain mapping
+    via :meth:`as_mapping` for callers that want to feed it through
+    :func:`persistence.operations.complete_run` (which re-serialises with
+    the canonical encoder). Both surfaces sort keys for determinism so a
+    self-compare across two runs with identical inputs produces
+    byte-identical JSON.
     """
 
     overall_brier: float
     per_sector_brier: Mapping[str, float]
     per_class_brier: Mapping[str, float]
-    reliability_per_sector: Mapping[str, ReliabilityDiagram]
+    reliability_diagrams: Mapping[str, ReliabilityDiagram]
     zero_resolutions_sectors: tuple[str, ...]
     zero_resolutions_classes: tuple[str, ...]
+    fallback_polarity_count: int
+    fallback_polarity_rate: float
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.overall_brier <= 1.0):
@@ -201,6 +229,80 @@ class ScoreSummary:
                     f"ScoreSummary.per_class_brier[{class_id!r}] must be in [0.0, 1.0], "
                     f"got {value!r}"
                 )
+        if self.fallback_polarity_count < 0:
+            raise BacktestConfigError(
+                "ScoreSummary.fallback_polarity_count must be >= 0, "
+                f"got {self.fallback_polarity_count!r}"
+            )
+        if not (0.0 <= self.fallback_polarity_rate <= 1.0):
+            raise BacktestConfigError(
+                "ScoreSummary.fallback_polarity_rate must be in [0.0, 1.0], "
+                f"got {self.fallback_polarity_rate!r}"
+            )
+
+    def as_mapping(self) -> dict[str, Any]:
+        """Return a deterministic plain-dict representation of the summary.
+
+        Sectors and classes are emitted as sorted dicts; reliability
+        diagrams are decomposed into nested dict / list structure with
+        ``bin_count`` and an ordered ``bins`` list whose entries carry
+        the ``ReliabilityBin`` field names. ``zero_resolutions_*`` are
+        emitted as sorted lists. The shape is stable across calls so
+        :meth:`to_json` produces byte-identical output for identical
+        inputs (REQ-CB-PERSIST-001 determinism gate).
+        """
+        return {
+            "fallback_polarity_count": self.fallback_polarity_count,
+            "fallback_polarity_rate": self.fallback_polarity_rate,
+            "overall_brier": self.overall_brier,
+            "per_class_brier": dict(sorted(self.per_class_brier.items())),
+            "per_sector_brier": dict(sorted(self.per_sector_brier.items())),
+            "reliability_diagrams": {
+                sector: _reliability_diagram_to_mapping(self.reliability_diagrams[sector])
+                for sector in sorted(self.reliability_diagrams)
+            },
+            "zero_resolutions_classes": sorted(self.zero_resolutions_classes),
+            "zero_resolutions_sectors": sorted(self.zero_resolutions_sectors),
+        }
+
+    def to_json(self) -> str:
+        """Return the canonical JSON encoding of the summary.
+
+        Uses ``json.dumps(sort_keys=True)`` so identical
+        :class:`ScoreSummary` inputs produce byte-identical output
+        across runs and platforms (T-CB-023 determinism gate). The
+        compact separator tuple matches
+        :func:`persistence.operations._dumps_canonical` so the
+        round-trip through DuckDB's ``JSON`` column preserves the
+        on-disk byte sequence.
+        """
+        return json.dumps(
+            self.as_mapping(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+def _reliability_diagram_to_mapping(diagram: ReliabilityDiagram) -> dict[str, Any]:
+    """Decompose a :class:`ReliabilityDiagram` into a deterministic mapping.
+
+    Bins are emitted in their stored order (which mirrors the bin index
+    from low to high probability) so the renderer can consume the JSON
+    payload without re-sorting.
+    """
+    return {
+        "bin_count": diagram.bin_count,
+        "bins": [
+            {
+                "count": bin_.count,
+                "empirical_rate": bin_.empirical_rate,
+                "lower_p": bin_.lower_p,
+                "mean_predicted_p": bin_.mean_predicted_p,
+                "upper_p": bin_.upper_p,
+            }
+            for bin_ in diagram.bins
+        ],
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,6 +522,17 @@ class RunParameters:
     window, naive datetimes, an empty ``class_ids`` tuple, and an empty
     ``venues`` tuple. ``sectors`` may be empty (the seed library exposes
     only one sector today; an empty filter means "all sectors").
+
+    The optional ``bin_count`` and ``bin_count_per_sector`` overrides
+    flow from ``--bin-count`` / ``--bin-count-per-sector`` CLI flags
+    (T-CB-026). They are **excluded** from the canonical ``run_id``
+    hash because reliability bins are a display concern (design §3.4):
+    two runs with identical replay parameters but different bin counts
+    must share a ``run_id``. Operators see the resolved bin counts on
+    :class:`BacktestRun` (``bin_count_global`` / ``bin_count_per_sector``)
+    for auditability. Per-sector overrides default to an empty mapping;
+    the resolver (:func:`engines.scoring.resolve_bin_counts`) layers
+    in the per-sector + global + module-default fallback chain.
     """
 
     since_ts: datetime
@@ -429,6 +542,8 @@ class RunParameters:
     sectors: tuple[str, ...]
     venues: tuple[str, ...]
     allow_recent: bool
+    bin_count: int | None = None
+    bin_count_per_sector: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.since_ts.tzinfo is None:
@@ -453,6 +568,15 @@ class RunParameters:
             raise BacktestConfigError("RunParameters.class_ids must be non-empty")
         if not self.venues:
             raise BacktestConfigError("RunParameters.venues must be non-empty")
+        if self.bin_count is not None and self.bin_count < 2:
+            raise BacktestConfigError(
+                f"RunParameters.bin_count must be >= 2 when set, got {self.bin_count!r}"
+            )
+        for sector, count in self.bin_count_per_sector.items():
+            if count < 2:
+                raise BacktestConfigError(
+                    f"RunParameters.bin_count_per_sector[{sector!r}] must be >= 2, got {count!r}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,15 +606,110 @@ class BacktestTrace:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class CompareCell:
+    """One cell of a run-vs-run comparison (T-CB-024; design §3.7).
+
+    Each cell summarises a ``(sector, class_id)`` group across two
+    backtest runs A and B. ``brier_a`` and ``brier_b`` carry the
+    aggregated Brier score for each side (``AVG(brier_contribution)``
+    over ``status='scored'`` rows, mirroring T-CB-023's per-sector and
+    per-class aggregation exactly so a self-compare yields zero deltas).
+    Cells observed in only one run carry ``None`` for the missing side
+    plus all delta fields per REQ-CB-SCORE-005.
+
+    ``crossed_miscalibration_threshold`` is computed in Python (not SQL)
+    so the threshold can be overridden per-call without re-issuing the
+    aggregate query: it is ``True`` when ``abs(delta_absolute) >=
+    threshold`` and ``False`` otherwise — but only when ``present_in``
+    is :data:`PresentIn.BOTH`. Asymmetric cells carry ``None``.
+
+    ``trace_diff_summary`` is reserved for v2 trace-diff work (DEFER) and
+    is always ``None`` in v1.
+    """
+
+    sector: str
+    class_id: str
+    brier_a: float | None
+    brier_b: float | None
+    delta_absolute: float | None
+    delta_percent: float | None
+    crossed_miscalibration_threshold: bool | None
+    present_in: PresentIn
+    trace_diff_summary: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.sector:
+            raise BacktestConfigError("CompareCell.sector must be non-empty")
+        if not self.class_id:
+            raise BacktestConfigError(f"CompareCell {self.sector!r}: class_id must be non-empty")
+        if self.brier_a is not None and not (0.0 <= self.brier_a <= 1.0):
+            raise BacktestConfigError(
+                f"CompareCell ({self.sector!r}, {self.class_id!r}): brier_a must be in "
+                f"[0.0, 1.0] when set, got {self.brier_a!r}"
+            )
+        if self.brier_b is not None and not (0.0 <= self.brier_b <= 1.0):
+            raise BacktestConfigError(
+                f"CompareCell ({self.sector!r}, {self.class_id!r}): brier_b must be in "
+                f"[0.0, 1.0] when set, got {self.brier_b!r}"
+            )
+        if self.present_in is PresentIn.BOTH:
+            if self.brier_a is None or self.brier_b is None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "present_in='both' requires both brier_a and brier_b to be set"
+                )
+            if self.delta_absolute is None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "present_in='both' requires delta_absolute to be set"
+                )
+            if self.crossed_miscalibration_threshold is None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "present_in='both' requires crossed_miscalibration_threshold to be set"
+                )
+        else:
+            if self.delta_absolute is not None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "asymmetric cells must carry delta_absolute=None"
+                )
+            if self.delta_percent is not None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "asymmetric cells must carry delta_percent=None"
+                )
+            if self.crossed_miscalibration_threshold is not None:
+                raise BacktestConfigError(
+                    f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                    "asymmetric cells must carry crossed_miscalibration_threshold=None"
+                )
+            if self.present_in is PresentIn.A_ONLY:
+                if self.brier_a is None or self.brier_b is not None:
+                    raise BacktestConfigError(
+                        f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                        "present_in='a_only' requires brier_a set and brier_b=None"
+                    )
+            else:  # PresentIn.B_ONLY
+                if self.brier_b is None or self.brier_a is not None:
+                    raise BacktestConfigError(
+                        f"CompareCell ({self.sector!r}, {self.class_id!r}): "
+                        "present_in='b_only' requires brier_b set and brier_a=None"
+                    )
+
+
 __all__ = [
     "BacktestPrediction",
     "BacktestRun",
     "BacktestStatus",
     "BacktestTrace",
+    "CompareCell",
     "CompressionAlgorithm",
     "PolaritySource",
     "PolarityValue",
     "PredictionStatus",
+    "PresentIn",
     "ReliabilityBin",
     "ReliabilityDiagram",
     "RunParameters",

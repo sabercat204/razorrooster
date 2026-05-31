@@ -9,3 +9,9 @@ disk_cap_mb: 100
 max_workers: 4
 trace_compression: zstd
 trace_compression_level: 3
+
+# Compare-engine knobs (T-CB-024). Mirrors report_generator's config name
+# and default but is read locally to keep subsystem isolation
+# (calibration_backtest does not import report_generator at runtime).
+compare:
+  brier_miscalibration_threshold: 0.25

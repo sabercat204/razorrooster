@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import uuid
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -71,6 +70,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import duckdb
 
+from razor_rooster.calibration_backtest import version as version_module
 from razor_rooster.calibration_backtest.engines import freezer as freezer_module
 from razor_rooster.calibration_backtest.engines import polarity as polarity_module
 from razor_rooster.calibration_backtest.engines import trace_codec
@@ -99,10 +99,14 @@ from razor_rooster.calibration_backtest.models import (
     SkipReason,
 )
 from razor_rooster.calibration_backtest.persistence import operations as persistence
+from razor_rooster.calibration_backtest.run_id import compute_run_id_for_params
 from razor_rooster.pattern_library import library, registry
 from razor_rooster.pattern_library.models.base_rate import BaseRateResult
 from razor_rooster.pattern_library.models.event_class import EventClass
 from razor_rooster.pattern_library.models.signature import SignatureResult
+from razor_rooster.pattern_library.version import (
+    current_version as _pattern_library_current_version,
+)
 from razor_rooster.signal_scanner.engines.posterior import (
     PosteriorResult,
     posterior_with_ci,
@@ -117,6 +121,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "DEFAULT_FALLBACK_BIN_COUNT",
     "DEFAULT_MIN_SUPPORT",
     "DEFAULT_RECENT_WINDOW_DAYS",
     "MappedResolution",
@@ -1080,18 +1085,59 @@ def run_backtest(
             recommended_until_ts=cutoff,
         )
 
-    # Synthesise a placeholder run_id; T-CB-022 replaces this with the
-    # canonicalized hash via :func:`run_id.compute_run_id`. The UUID
-    # keeps the in-memory :class:`BacktestRun` constructor happy
-    # (``run_id`` must be non-empty) and avoids collisions when tests
-    # invoke ``run_backtest`` repeatedly within a single process.
-    run_id = uuid.uuid4().hex
+    # Capture the system revision once at the top so the IN_PROGRESS row
+    # and the COMPLETE/FAILED row record the same value (T-CB-026 clears
+    # Phase 3 review advisory F). Hard-coded ``"unversioned"`` strings
+    # are gone; the resolver falls back to
+    # :data:`version.SYSTEM_REVISION_FALLBACK` when git is unavailable.
+    system_revision = version_module.resolve_system_revision()
+
+    # Resolve the pattern-library version once. The replay loop already
+    # accepts a ``library_version`` override (used by tests to pin a
+    # specific version); when omitted we resolve from
+    # :func:`pattern_library.version.current_version`. The resolved
+    # value flows into both the canonical run-id hash (REQ-CB-FREEZE-003)
+    # and the persisted ``backtest_runs.library_version`` column.
+    resolved_library_version = (
+        library_version if library_version is not None else _pattern_library_current_version()
+    )
+
+    # Resolve per-class definition versions for the run-id hash
+    # (REQ-CB-FREEZE-003). The lookup is best-effort: when the store is
+    # not a real DuckDBStore (e.g. integration tests passing
+    # ``object()``) or the ``pl_event_classes`` table has not been
+    # populated, we fall back to ``definition_version=1`` per class.
+    # This keeps the run-id stable across processes for the same
+    # configuration without forcing every test to seed pattern_library.
+    class_definition_versions = _resolve_class_definition_versions(
+        store=store, class_ids=tuple(params.class_ids)
+    )
+
+    # Compute the canonical, deterministic run_id (T-CB-026 clears
+    # Phase 3 review advisory E). Two runs with identical
+    # :class:`RunParameters`, identical pattern-library state, and the
+    # same captured ``system_revision`` produce the same 64-char SHA-256
+    # hex digest — replacing the previous ``uuid.uuid4().hex``
+    # placeholder. ``params.bin_count`` / ``params.bin_count_per_sector``
+    # are deliberately excluded from the hash (display-only per design
+    # §3.4), so a bin-count change does NOT invalidate prior caches.
+    run_id = compute_run_id_for_params(
+        params,
+        library_version=resolved_library_version,
+        system_revision=system_revision,
+        class_definition_versions=class_definition_versions,
+    )
 
     started_at = current_now
     workers = max_workers if max_workers is not None else _load_max_workers()
     if workers < 1:
         workers = 1
-    resolved_library_version = library_version if library_version is not None else 1
+
+    # Resolve the bin counts that go onto the persisted run row.
+    # Resolution does not affect the run_id hash (excluded by design)
+    # and does not validate the report.yaml in tests that pass nothing
+    # — a missing file falls back to defaults with a warning logged.
+    bin_count_global, bin_count_per_sector = _resolve_run_bin_counts(params)
 
     # Step 1b — persist the IN_PROGRESS run row before any per-prediction
     # work fires. Operators tailing ``backtest_runs`` see the row appear
@@ -1110,7 +1156,7 @@ def run_backtest(
             sectors=tuple(params.sectors),
             venues=tuple(params.venues),
             library_version=resolved_library_version,
-            system_revision="unversioned",
+            system_revision=system_revision,
             started_at=started_at,
             completed_at=None,
             status=BacktestStatus.IN_PROGRESS,
@@ -1120,8 +1166,8 @@ def run_backtest(
             predictions_skipped=0,
             overall_brier=None,
             summary_json=None,
-            bin_count_global=10,
-            bin_count_per_sector={},
+            bin_count_global=bin_count_global,
+            bin_count_per_sector=bin_count_per_sector,
             fallback_polarity_count=0,
             allow_recent=params.allow_recent,
             disclaimer_version="v1",
@@ -1249,7 +1295,7 @@ def run_backtest(
             sectors=tuple(params.sectors),
             venues=tuple(params.venues),
             library_version=resolved_library_version,
-            system_revision="unversioned",
+            system_revision=system_revision,
             started_at=started_at,
             completed_at=completed_at,
             status=BacktestStatus.COMPLETE,
@@ -1259,8 +1305,8 @@ def run_backtest(
             predictions_skipped=skipped_count,
             overall_brier=None,
             summary_json=None,
-            bin_count_global=10,
-            bin_count_per_sector={},
+            bin_count_global=bin_count_global,
+            bin_count_per_sector=bin_count_per_sector,
             fallback_polarity_count=fallback_count,
             allow_recent=params.allow_recent,
             disclaimer_version="v1",
@@ -1321,3 +1367,90 @@ def _validate_iterable_non_empty(values: Iterable[str], field: str) -> None:
     """Defensive guard reused by future T-CB-019 wiring (currently unused)."""
     if not list(values):
         raise BacktestConfigError(f"{field} must be non-empty")
+
+
+# ---------------------------------------------------------------------------
+# Run-id input resolution (T-CB-026; design §3.4)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_class_definition_versions(*, store: Any, class_ids: tuple[str, ...]) -> dict[str, int]:
+    """Best-effort lookup of per-class ``definition_version`` from pattern_library.
+
+    Hashes into the canonical ``run_id`` so any class's
+    ``definition_version`` bump propagates into a fresh run_id
+    (REQ-CB-FREEZE-003). The lookup is *defensive* by design: when the
+    supplied ``store`` is not a real :class:`DuckDBStore` (tests often
+    pass a bare :class:`object`) or the ``pl_event_classes`` table has
+    not been populated, every class falls back to
+    ``definition_version=1`` so the run-id is still computable.
+
+    The fallback keeps the orchestration tests in
+    ``tests/calibration_backtest/test_replay.py`` self-contained — they
+    do not need to seed the pattern_library schema just to compute a
+    deterministic ``run_id``. Production wiring (T-CB-018+) supplies a
+    populated :class:`DuckDBStore` and the lookup returns truthful
+    versions.
+    """
+    versions: dict[str, int] = {class_id: 1 for class_id in class_ids}
+    try:
+        summaries = library.list_classes(store, include_removed=True)
+    except Exception:
+        # ``object()`` store, missing schema, or any other lookup
+        # failure — fall back to the default mapping. The replay loop
+        # logs the exception via the per-prediction error path; we
+        # deliberately do not log here because the run-id computation
+        # is best-effort and a missing pattern_library is the
+        # bootstrap-test default.
+        return versions
+    for summary in summaries:
+        if summary.class_id in versions:
+            versions[summary.class_id] = summary.definition_version
+    return versions
+
+
+def _resolve_run_bin_counts(params: RunParameters) -> tuple[int, dict[str, int]]:
+    """Best-effort bin-count resolution for the persisted ``backtest_runs`` row.
+
+    Wraps :func:`engines.scoring.resolve_bin_counts` so the replay loop
+    never crashes on a malformed ``config/report.yaml`` — operators can
+    surface a backtest run row even when the report config is broken
+    upstream. Any resolver error falls back to the CLI override (when
+    set) or :data:`DEFAULT_FALLBACK_BIN_COUNT`.
+    """
+    # Local import so the replay module's import surface stays narrow
+    # (the scoring module has heavier transitive imports).
+    from razor_rooster.calibration_backtest.engines.scoring import resolve_bin_counts
+
+    try:
+        return resolve_bin_counts(params)
+    except BacktestConfigError:
+        # Validation failure: the CLI override or the report.yaml
+        # produced an out-of-range bin count. Re-raise so the operator
+        # sees the configuration error rather than persisting a row
+        # with a silently-defaulted bin count.
+        raise
+    except Exception:
+        # Any other failure (loader I/O, transitive import, etc.) falls
+        # back to the CLI override or the module default. The replay
+        # row still records a coherent bin count for auditability.
+        global_bin_count = (
+            params.bin_count if params.bin_count is not None else DEFAULT_FALLBACK_BIN_COUNT
+        )
+        if global_bin_count < 2:
+            global_bin_count = DEFAULT_FALLBACK_BIN_COUNT
+        per_sector_overrides = {
+            sector: count
+            for sector, count in params.bin_count_per_sector.items()
+            if count >= 2 and count != global_bin_count
+        }
+        return global_bin_count, per_sector_overrides
+
+
+DEFAULT_FALLBACK_BIN_COUNT: Final[int] = 10
+"""Final fallback when ``resolve_bin_counts`` raises a non-config error.
+
+Mirrors :data:`engines.scoring.DEFAULT_BIN_COUNT` so the replay row's
+bin count matches the scoring engine's default when both fall through
+to module defaults.
+"""

@@ -150,8 +150,48 @@ def compute_run_id(inputs: RunIdInputs) -> str:
     return digest
 
 
+def compute_run_id_for_params(
+    params: Any,
+    *,
+    library_version: int,
+    system_revision: str,
+    class_definition_versions: Mapping[str, int],
+) -> str:
+    """Convenience wrapper: compute a canonical ``run_id`` from a :class:`RunParameters`.
+
+    Builds a :class:`RunIdInputs` from the supplied
+    :class:`razor_rooster.calibration_backtest.models.RunParameters`
+    instance, the resolved pattern-library ``library_version``, the
+    captured ``system_revision``, and the per-class
+    ``definition_version`` mapping (REQ-CB-FREEZE-003), then forwards
+    to :func:`compute_run_id`. The bin-count overrides on
+    :class:`RunParameters` are deliberately not threaded into the hash —
+    bin counts are display-only per design §3.4.
+
+    The ``params`` argument is typed ``Any`` to avoid a circular import
+    between :mod:`run_id` and :mod:`models`; in practice callers pass a
+    :class:`razor_rooster.calibration_backtest.models.RunParameters`
+    instance whose attribute surface mirrors :class:`RunIdInputs` minus
+    the cross-cutting hash inputs (library_version, system_revision,
+    class_definition_versions).
+    """
+    inputs = RunIdInputs(
+        since_ts=params.since_ts,
+        until_ts=params.until_ts,
+        lag_days=params.lag_days,
+        class_ids=tuple(params.class_ids),
+        class_definition_versions=dict(class_definition_versions),
+        sectors=tuple(params.sectors),
+        venues=tuple(params.venues),
+        library_version=library_version,
+        system_revision=system_revision,
+    )
+    return compute_run_id(inputs)
+
+
 __all__ = [
     "RunIdInputs",
     "canonicalize",
     "compute_run_id",
+    "compute_run_id_for_params",
 ]

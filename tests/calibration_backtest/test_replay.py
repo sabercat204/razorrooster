@@ -831,3 +831,154 @@ def test_polarity_source_enum_maps_known_sentinels() -> None:
     )
     with pytest.raises(BacktestConfigError, match="unrecognised polarity source"):
         _polarity_source_enum("magic")
+
+
+# ---------------------------------------------------------------------------
+# Canonical run_id + system_revision wiring (T-CB-026; clears Phase 3 advisories E + F)
+# ---------------------------------------------------------------------------
+
+
+def test_run_backtest_run_id_is_64_char_sha256_hex(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+) -> None:
+    """The replay loop emits a canonical 64-char hex digest, not a UUID hex.
+
+    UUID hex strings are 32 characters (no dashes); the canonical
+    SHA-256 ``run_id`` is 64. Asserting the length is sufficient to
+    catch any regression to ``uuid.uuid4().hex``.
+    """
+    params = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    assert len(result.run.run_id) == 64
+    assert all(ch in "0123456789abcdef" for ch in result.run.run_id)
+
+
+def test_run_backtest_two_calls_with_identical_params_share_run_id(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+) -> None:
+    """Two ``run_backtest`` calls with identical :class:`RunParameters` produce
+    the same ``run_id`` (T-CB-026 determinism).
+    """
+    params = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    first = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    second = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    assert first.run.run_id == second.run.run_id
+
+
+def test_run_backtest_bin_count_does_not_change_run_id(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+) -> None:
+    """Mutating ``bin_count`` on :class:`RunParameters` does NOT alter ``run_id``.
+
+    Bin counts are display-only per design §3.4; the run-id hash must
+    exclude them so two runs with identical replay parameters but
+    different bin counts share a ``run_id``.
+    """
+    base = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    with_bin_override = RunParameters(
+        since_ts=base.since_ts,
+        until_ts=base.until_ts,
+        lag_days=base.lag_days,
+        class_ids=base.class_ids,
+        sectors=base.sectors,
+        venues=base.venues,
+        allow_recent=base.allow_recent,
+        bin_count=20,
+        bin_count_per_sector={"public_health": 25},
+    )
+    a = run_backtest(base, conn=conn, store=object(), now=_NOW, max_workers=1)
+    b = run_backtest(with_bin_override, conn=conn, store=object(), now=_NOW, max_workers=1)
+    assert a.run.run_id == b.run.run_id
+
+
+def test_run_backtest_lag_days_change_alters_run_id(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+) -> None:
+    """A ``lag_days`` change alters the ``run_id`` (sanity check for hash inclusion)."""
+    base = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+        lag_days=7,
+    )
+    other = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+        lag_days=14,
+    )
+    a = run_backtest(base, conn=conn, store=object(), now=_NOW, max_workers=1)
+    b = run_backtest(other, conn=conn, store=object(), now=_NOW, max_workers=1)
+    assert a.run.run_id != b.run.run_id
+
+
+def test_run_backtest_system_revision_is_resolved_not_hardcoded(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``system_revision`` flows from :func:`version.resolve_system_revision`.
+
+    Patches the resolver to a sentinel value and confirms the synthesised
+    :class:`BacktestRun` carries that value (no longer the hard-coded
+    ``"unversioned"`` string).
+    """
+    from razor_rooster.calibration_backtest import version as version_module
+
+    sentinel = "test-revision-sha-1234"
+    monkeypatch.setattr(version_module, "resolve_system_revision", lambda: sentinel)
+
+    params = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    assert result.run.system_revision == sentinel
+
+
+def test_run_backtest_system_revision_consistent_across_in_progress_and_complete(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When persistence is wired, the IN_PROGRESS and COMPLETE rows agree on
+    ``system_revision`` (the resolver is called once, at the top of the loop).
+
+    The test asserts the synthesised :class:`BacktestRun` carries the
+    expected revision; the persistence-wired equivalent test in
+    :mod:`tests.calibration_backtest.test_replay_persistence` exercises
+    the IN_PROGRESS row's value end-to-end.
+    """
+    from razor_rooster.calibration_backtest import version as version_module
+
+    # Resolver returns a different sentinel each time it's called. If
+    # the loop captured the value once at the top, both run-row writes
+    # see the same string; if it called the resolver twice, the
+    # IN_PROGRESS and COMPLETE strings would diverge.
+    call_count = {"n": 0}
+
+    def _drifting_resolver() -> str:
+        call_count["n"] += 1
+        return f"sha-{call_count['n']}"
+
+    monkeypatch.setattr(version_module, "resolve_system_revision", _drifting_resolver)
+
+    params = _make_params(
+        since_ts=_NOW - timedelta(days=180),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    # The resolver was called exactly once; the run-row carries that value.
+    assert call_count["n"] == 1
+    assert result.run.system_revision == "sha-1"
