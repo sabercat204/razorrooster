@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -54,6 +55,19 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_WORKERS: int = 4
 DEFAULT_LIBRARY_STALE_DAYS: int = 14
 DEFAULT_LOOKBACK_DAYS: int = 30
+
+
+__all__ = [
+    "DEFAULT_LIBRARY_STALE_DAYS",
+    "DEFAULT_LOOKBACK_DAYS",
+    "DEFAULT_MAX_WORKERS",
+    "LibraryVersionChangeError",
+    "ScanReport",
+    "StrictDriftAbort",
+    "evaluate_class",
+    "evaluate_precursors_at_time",
+    "run_scan",
+]
 
 
 class StrictDriftAbort(RuntimeError):
@@ -507,6 +521,67 @@ def _persist_outcome(
         report.succeeded += 1
     if record.is_candidate:
         report.candidates += 1
+
+
+def evaluate_precursors_at_time(
+    store: DuckDBStore,
+    cls: EventClass,
+    signatures: tuple[SignatureResult, ...] | Sequence[SignatureResult],
+    as_of_ts: datetime,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+) -> tuple[dict[str, float | None], bool]:
+    """Time-frozen public wrapper for precursor evaluation (T-CB-017).
+
+    The live scanner pulls precursor values relative to "now" (the
+    scan-start instant). The calibration backtest replays history and
+    must instead pull each precursor as if the operator scanned at
+    ``as_of_ts`` — i.e. only data with ``source_publication_ts <=
+    as_of_ts`` is allowed to influence the posterior. This wrapper
+    delegates to :func:`_evaluate_precursors` with ``scan_started_at``
+    set to ``as_of_ts``: because each precursor query takes the window
+    pair ``(window_start, window_end)`` and ``window_end`` becomes
+    ``as_of_ts``, every underlying query is naturally bounded to
+    ``source_publication_ts <= as_of_ts`` (each precursor's query
+    function is responsible for honouring that bound; the data_ingest
+    canonical tables expose ``source_publication_ts`` so the bound is
+    enforceable at the SQL layer).
+
+    Args:
+        store: DuckDB store with data_ingest, pattern_library, and
+            signal_scanner schemas applied.
+        cls: The event class whose precursors are being evaluated.
+        signatures: Pattern-library signature results for the class.
+        as_of_ts: The frozen-time horizon. Acts as ``window_end`` and
+            replaces the live ``scan_started_at`` parameter.
+        lookback_days: Window length in days. Defaults to 30 (the
+            scanner default), matching the live path.
+
+    Returns:
+        ``(current_values, source_stale)`` — same shape as the private
+        :func:`_evaluate_precursors`. ``current_values`` maps each
+        precursor's ``variable_id`` to its latest finite observed
+        value at or before ``as_of_ts``, or ``None`` when missing.
+        ``source_stale`` is True when no precursor produced a value
+        at all over ``[as_of_ts - lookback_days, as_of_ts]``.
+
+    Notes:
+        This wrapper is intentionally a thin delegator: it does not
+        reimplement the scanner internals, so any future change to
+        the live precursor-evaluation logic flows automatically into
+        the backtest replay path. The contract test in
+        ``tests/signal_scanner/test_evaluate_precursors_at_time.py``
+        locks that non-divergence in.
+    """
+    sig_tuple: tuple[SignatureResult, ...] = (
+        signatures if isinstance(signatures, tuple) else tuple(signatures)
+    )
+    return _evaluate_precursors(
+        store=store,
+        cls=cls,
+        signatures=sig_tuple,
+        scan_started_at=as_of_ts,
+        lookback_days=lookback_days,
+    )
 
 
 def _evaluate_precursors(

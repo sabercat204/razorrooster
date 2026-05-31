@@ -484,7 +484,9 @@ class TestEnums:
         assert PredictionStatus.SKIPPED.value == "skipped"
 
     def test_polarity_value_values(self) -> None:
-        assert PolarityValue.FORWARD.value == "forward"
+        # FORWARD's string value is "direct" to match the v1
+        # ``backtest_predictions.polarity`` CHECK constraint.
+        assert PolarityValue.FORWARD.value == "direct"
         assert PolarityValue.INVERTED.value == "inverted"
 
     def test_polarity_source_values(self) -> None:
@@ -499,7 +501,9 @@ class TestEnums:
         assert SkipReason.INVALID_RESOLUTION.value == "invalid_resolution"
         assert SkipReason.EXCEPTION.value == "exception"
         assert SkipReason.MAPPING_NOT_FOUND.value == "mapping_not_found"
-        assert SkipReason.INSUFFICIENT_PRECURSOR_DATA.value == "insufficient_precursor_data"
+        # The on-disk value is "insufficient_data" to match the v1 schema
+        # CHECK constraint and design §3.13 enumeration.
+        assert SkipReason.INSUFFICIENT_PRECURSOR_DATA.value == "insufficient_data"
 
     def test_compression_algorithm_values(self) -> None:
         assert CompressionAlgorithm.ZSTD.value == "zstd"
@@ -544,6 +548,7 @@ class TestPublicSurface:
             "PredictionStatus",
             "ReliabilityBin",
             "ReliabilityDiagram",
+            "RunParameters",
             "ScoreSummary",
             "SkipReason",
         }

@@ -56,9 +56,18 @@ class PredictionStatus(StrEnum):
 
 
 class PolarityValue(StrEnum):
-    """Polarity applied to align a market resolution with the model class."""
+    """Polarity applied to align a market resolution with the model class.
 
-    FORWARD = "forward"
+    The string values mirror the v1 ``backtest_predictions.polarity``
+    CHECK constraint (``'direct' | 'inverted'``) so a
+    :class:`BacktestPrediction` can be persisted without a string
+    rewrite at the persistence-layer boundary. The replay loop's
+    :data:`razor_rooster.calibration_backtest.engines.replay._POLARITY_DIRECT`
+    set normalises the upstream synonym ``'aligned'`` (the literal
+    ``mispricing_detector`` writes today) to :data:`FORWARD`.
+    """
+
+    FORWARD = "direct"
     INVERTED = "inverted"
 
 
@@ -71,7 +80,16 @@ class PolaritySource(StrEnum):
 
 
 class SkipReason(StrEnum):
-    """Closed enumeration of reasons a prediction may be skipped (design §3.13)."""
+    """Closed enumeration of reasons a prediction may be skipped (design §3.13).
+
+    String values mirror the v1 ``backtest_predictions.skip_reason`` CHECK
+    constraint (design §3.13) so a :class:`BacktestPrediction` can be
+    persisted without a string rewrite at the persistence-layer
+    boundary. The Python identifier
+    :data:`INSUFFICIENT_PRECURSOR_DATA` carries the descriptive name used
+    in code paths and error messages, while the on-disk value
+    ``'insufficient_data'`` matches the design doc.
+    """
 
     INSUFFICIENT_LAG = "insufficient_lag"
     SOURCE_DATA_NOT_FROZEN = "source_data_not_frozen"
@@ -79,7 +97,7 @@ class SkipReason(StrEnum):
     INVALID_RESOLUTION = "invalid_resolution"
     EXCEPTION = "exception"
     MAPPING_NOT_FOUND = "mapping_not_found"
-    INSUFFICIENT_PRECURSOR_DATA = "insufficient_precursor_data"
+    INSUFFICIENT_PRECURSOR_DATA = "insufficient_data"
 
 
 class CompressionAlgorithm(StrEnum):
@@ -383,6 +401,61 @@ class BacktestPrediction:
 
 
 @dataclass(frozen=True, slots=True)
+class RunParameters:
+    """Operator-supplied inputs for one backtest run (design §3.5).
+
+    The replay loop (T-CB-018, :func:`engines.replay.run_backtest`)
+    consumes a ``RunParameters`` instance to (a) compute the deterministic
+    ``run_id`` (via :class:`razor_rooster.calibration_backtest.run_id.RunIdInputs`),
+    (b) enforce the recent-window guard (REQ-CB-RUN-002), and (c) drive
+    the ``iter_mapped_resolutions`` SQL prefilter that selects the
+    in-scope ``polymarket_resolutions`` rows. Sequence fields are stored
+    as immutable ``tuple[str, ...]`` because the dataclass is frozen and
+    because run-id canonicalization sorts them anyway; passing a
+    ``set``/``list``/``frozenset`` at the call site is fine — the caller
+    converts to tuple before construction.
+
+    Validation (``__post_init__``) rejects configurations the replay loop
+    must never accept: lag below the floor, an empty or inverted replay
+    window, naive datetimes, an empty ``class_ids`` tuple, and an empty
+    ``venues`` tuple. ``sectors`` may be empty (the seed library exposes
+    only one sector today; an empty filter means "all sectors").
+    """
+
+    since_ts: datetime
+    until_ts: datetime
+    lag_days: int
+    class_ids: tuple[str, ...]
+    sectors: tuple[str, ...]
+    venues: tuple[str, ...]
+    allow_recent: bool
+
+    def __post_init__(self) -> None:
+        if self.since_ts.tzinfo is None:
+            raise BacktestConfigError(
+                "RunParameters.since_ts must be timezone-aware, "
+                f"got naive datetime {self.since_ts.isoformat()!r}"
+            )
+        if self.until_ts.tzinfo is None:
+            raise BacktestConfigError(
+                "RunParameters.until_ts must be timezone-aware, "
+                f"got naive datetime {self.until_ts.isoformat()!r}"
+            )
+        if self.since_ts >= self.until_ts:
+            raise BacktestConfigError(
+                "RunParameters.since_ts must precede until_ts "
+                f"(since_ts={self.since_ts.isoformat()}, "
+                f"until_ts={self.until_ts.isoformat()})"
+            )
+        if self.lag_days < 1:
+            raise BacktestConfigError(f"RunParameters.lag_days must be >= 1, got {self.lag_days!r}")
+        if not self.class_ids:
+            raise BacktestConfigError("RunParameters.class_ids must be non-empty")
+        if not self.venues:
+            raise BacktestConfigError("RunParameters.venues must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
 class BacktestTrace:
     """One row of ``backtest_traces`` (design §3.7).
 
@@ -420,6 +493,7 @@ __all__ = [
     "PredictionStatus",
     "ReliabilityBin",
     "ReliabilityDiagram",
+    "RunParameters",
     "ScoreSummary",
     "SkipReason",
 ]

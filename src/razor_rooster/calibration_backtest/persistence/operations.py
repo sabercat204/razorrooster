@@ -255,6 +255,54 @@ def update_run_status(
         raise _wrap_db_error(f"update_run_status({run_id!r}, {status!s}) failed", exc) from exc
 
 
+def complete_run(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    *,
+    status: BacktestStatus,
+    completed_at: datetime,
+    summary_json: Mapping[str, Any] | None = None,
+    error_summary: str | None = None,
+    predictions_total: int | None = None,
+    predictions_scored: int | None = None,
+    predictions_skipped: int | None = None,
+    overall_brier: float | None = None,
+    fallback_polarity_count: int | None = None,
+) -> None:
+    """Apply the terminal ``in_progress -> complete | failed`` transition.
+
+    Thin wrapper over :func:`update_run_status` that pins the call shape
+    used by the replay loop (T-CB-019, design §3.5): the orchestrator
+    invokes ``complete_run(run_id, summary_json, status='complete')``
+    on the success path and ``complete_run(run_id, status='failed',
+    error_summary=str(exc))`` on the uncaught-exception path.
+
+    The accepted statuses are restricted to the two terminal values
+    (:data:`BacktestStatus.COMPLETE` and :data:`BacktestStatus.FAILED`);
+    any other value raises :class:`BacktestPersistenceError` before
+    touching the row. Optional counter / summary fields default to
+    ``None`` and leave the corresponding columns untouched, matching
+    :func:`update_run_status` semantics.
+    """
+    if status not in (BacktestStatus.COMPLETE, BacktestStatus.FAILED):
+        raise BacktestPersistenceError(
+            f"complete_run({run_id!r}): status must be COMPLETE or FAILED, got {status!s}"
+        )
+    update_run_status(
+        conn,
+        run_id,
+        status,
+        completed_at=completed_at,
+        error_summary=error_summary,
+        summary_json=summary_json,
+        predictions_total=predictions_total,
+        predictions_scored=predictions_scored,
+        predictions_skipped=predictions_skipped,
+        overall_brier=overall_brier,
+        fallback_polarity_count=fallback_polarity_count,
+    )
+
+
 def fetch_run(conn: duckdb.DuckDBPyConnection, run_id: str) -> BacktestRun | None:
     """Return the ``backtest_runs`` row for *run_id* hydrated as :class:`BacktestRun`.
 
@@ -556,6 +604,7 @@ def _row_to_prediction(row: tuple[Any, ...]) -> BacktestPrediction:
 
 
 __all__ = [
+    "complete_run",
     "fetch_predictions",
     "fetch_run",
     "fetch_run_status",
