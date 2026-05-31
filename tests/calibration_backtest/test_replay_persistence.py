@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
 import pytest
@@ -64,8 +64,18 @@ from razor_rooster.polymarket_connector.persistence.schemas import (
     POLYMARKET_RESOLUTIONS_DDL,
 )
 
+if TYPE_CHECKING:
+    from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
+
 _NOW = datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
 """Pinned wall-clock so the recent-window guard is deterministic."""
+
+_FAKE_STORE: DuckDBStore = cast("DuckDBStore", object())
+"""Sentinel store passed to ``run_backtest`` in tests that stub the pipeline.
+
+These persistence tests stub :func:`evaluate_class_at_frozen_time` so the
+``store`` argument is never dereferenced. The typed sentinel keeps mypy
+``--strict`` honest without requiring a real ``DuckDBStore`` instance."""
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +269,7 @@ def test_scored_predictions_land_in_predictions_and_traces_tables(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -309,7 +319,7 @@ def test_trace_encode_round_trips_through_persistence(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -352,7 +362,7 @@ def test_skipped_predictions_land_in_predictions_only(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -401,7 +411,7 @@ def test_mixed_scored_and_skipped_predictions_persist_correctly(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -438,7 +448,7 @@ def test_run_row_transitions_in_progress_to_complete_on_success(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -511,7 +521,7 @@ def test_in_progress_run_row_visible_during_loop(
     run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
         persistence_conn=conn,
@@ -556,7 +566,7 @@ def test_run_row_transitions_in_progress_to_failed_on_uncaught_exception(
         run_backtest(
             params,
             conn=conn,
-            store=object(),
+            store=_FAKE_STORE,
             now=_NOW,
             max_workers=1,
             persistence_conn=conn,
@@ -598,7 +608,7 @@ def test_no_persistence_conn_writes_no_rows(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )

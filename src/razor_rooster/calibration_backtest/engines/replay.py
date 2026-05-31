@@ -127,9 +127,14 @@ __all__ = [
     "MappedResolution",
     "ReplayResult",
     "evaluate_class_at_frozen_time",
+    "freezer_module",
     "iter_mapped_resolutions",
+    "library",
     "polarity_correct",
+    "polarity_module",
+    "registry",
     "run_backtest",
+    "validate_lag",
 ]
 
 _LOGGER: Final[logging.Logger] = logging.getLogger(__name__)

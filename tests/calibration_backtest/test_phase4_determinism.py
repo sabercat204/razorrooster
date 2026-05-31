@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
 import pytest
@@ -72,6 +72,9 @@ from razor_rooster.report_generator.engines.section_assemblers.reliability impor
     _equal_width_bins as _rg_equal_width_bins,
 )
 
+if TYPE_CHECKING:
+    from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
+
 # ---------------------------------------------------------------------------
 # Constants and fixtures
 # ---------------------------------------------------------------------------
@@ -82,6 +85,13 @@ _UNTIL = datetime(2024, 6, 1, tzinfo=UTC)
 _PRED_TS = datetime(2024, 1, 8, tzinfo=UTC)
 _RES_TS = datetime(2024, 1, 15, tzinfo=UTC)
 _STARTED = datetime(2024, 6, 1, 0, 0, 0, tzinfo=UTC)
+
+_FAKE_STORE: DuckDBStore = cast("DuckDBStore", object())
+"""Sentinel store passed to ``run_backtest`` in tests that stub the pipeline.
+
+The determinism tests monkeypatch :func:`evaluate_class_at_frozen_time` so
+the ``store`` argument is never dereferenced; a typed sentinel keeps mypy
+``--strict`` honest without requiring a real ``DuckDBStore`` instance."""
 
 
 @pytest.fixture
@@ -484,7 +494,7 @@ def test_run_backtest_canonical_run_id_is_stable_across_separate_databases(
         result_a = run_backtest(
             params,
             conn=db_a,
-            store=object(),
+            store=_FAKE_STORE,
             now=_NOW,
             max_workers=1,
             persistence_conn=db_a,
@@ -492,7 +502,7 @@ def test_run_backtest_canonical_run_id_is_stable_across_separate_databases(
         result_b = run_backtest(
             params,
             conn=db_b,
-            store=object(),
+            store=_FAKE_STORE,
             now=_NOW,
             max_workers=1,
             persistence_conn=db_b,
