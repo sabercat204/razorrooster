@@ -53,6 +53,14 @@ VERSION_6002: Final[int] = 6002
 ``backtest_predictions`` (design §3.3, OQ-CB-005). For v1 these columns are
 already part of the m6001 DDL, so m6002 is a no-op idempotent upgrade."""
 
+VERSION_6003: Final[int] = 6003
+"""Schema version for ``m6003_freezer_indexes`` — adds
+``(source_publication_ts DESC, source_id)`` indexes on the four canonical
+``data_ingest`` tables (``time_series``, ``event_stream``,
+``document_docket``, ``geospatial_indicator``) so the calibration-backtest
+freezer (T-CB-014, design §3.5) stays under the design §6 latency budget on
+multi-million-row corpora."""
+
 
 # ---------------------------------------------------------------------------
 # DDL — backtest_runs (design §3.3, table 1)
@@ -116,7 +124,8 @@ CREATE TABLE IF NOT EXISTS backtest_predictions (
     polarity_source                 VARCHAR     NOT NULL
         CHECK (polarity_source IN (
             'comparison_resolutions',
-            'current_mapping_fallback'
+            'current_mapping_fallback',
+            'no_polarity'
         )),
     mapping_mismatch_warning        BOOLEAN     NOT NULL DEFAULT FALSE,
     definition_version              INTEGER     NOT NULL,
@@ -128,6 +137,7 @@ CREATE TABLE IF NOT EXISTS backtest_predictions (
             'source_data_not_frozen',
             'no_polarity_resolution',
             'insufficient_data',
+            'mapping_not_found',
             'exception'
         )),
     brier_contribution              DOUBLE      NULL,
@@ -213,6 +223,7 @@ __all__ = [
     "TABLE_TRACES",
     "VERSION_6001",
     "VERSION_6002",
+    "VERSION_6003",
     "list_ddl",
     "list_tables",
 ]

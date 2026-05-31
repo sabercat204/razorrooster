@@ -215,7 +215,9 @@ def test_module_all_surface() -> None:
         "COMPRESSION_ALGORITHM",
         "COMPRESSION_LEVEL",
         "build_trace",
+        "decode",
         "decode_trace",
+        "encode",
         "encode_trace",
     }
     assert set(trace_codec_module.__all__) == expected

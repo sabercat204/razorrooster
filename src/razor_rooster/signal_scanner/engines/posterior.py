@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy import stats
@@ -36,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_MONTE_CARLO_SAMPLES: int = 1000
+
+
+__all__ = [
+    "DEFAULT_MONTE_CARLO_SAMPLES",
+    "PosteriorResult",
+    "base_rate_only",
+    "evaluate_precursors_at_time",  # noqa: F822 — resolved by ``__getattr__`` below.
+    "posterior_with_ci",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,3 +262,24 @@ def _rate_to_probability(rate_per_year: float) -> float:
     we cap at 0.999 so log-odds math stays well-defined.
     """
     return float(min(max(rate_per_year, 1e-6), 0.999))
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy re-export of :func:`evaluate_precursors_at_time` from scanner.
+
+    The canonical public import path documented in
+    ``CALIBRATION_BACKTEST_DESIGN.md`` §T-CB-017 is
+    ``signal_scanner.engines.posterior.evaluate_precursors_at_time``.
+    The function itself lives in :mod:`signal_scanner.engines.scanner`
+    next to its private helper ``_evaluate_precursors`` so it can
+    delegate without import cycles. ``scanner`` imports from
+    ``posterior`` at module load, so we re-export via ``__getattr__``
+    to defer the back-reference until first attribute access.
+    """
+    if name == "evaluate_precursors_at_time":
+        from razor_rooster.signal_scanner.engines.scanner import (
+            evaluate_precursors_at_time,
+        )
+
+        return evaluate_precursors_at_time
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -205,18 +205,25 @@ def test_down_is_idempotent_on_clean_db(conn: duckdb.DuckDBPyConnection) -> None
 def test_run_pending_applies_m6001_then_m6002(
     conn: duckdb.DuckDBPyConnection,
 ) -> None:
-    """End-to-end: the shared runner discovers and applies both in order."""
+    """End-to-end: the shared runner discovers and applies migrations in order.
+
+    The discovered set covers every ``m6###`` module currently under
+    :mod:`razor_rooster.calibration_backtest.persistence.migrations`. m6001
+    and m6002 must lead the order; later versions (e.g. m6003 freezer
+    indexes from T-CB-014) are appended after them.
+    """
     applied = run_pending_calibration_backtest_migrations(conn)
     versions = [m.version for m in applied]
-    assert versions == [schemas.VERSION_6001, schemas.VERSION_6002], (
-        f"expected [6001, 6002], got {versions}"
+    # m6001 and m6002 must appear in order at the head of the discovered set.
+    assert versions[:2] == [schemas.VERSION_6001, schemas.VERSION_6002], (
+        f"expected [6001, 6002, ...], got {versions}"
     )
-    # Both should be recorded in schema_migrations.
-    assert _applied_versions(conn) == [
-        schemas.VERSION_6001,
-        schemas.VERSION_6002,
-    ]
-    # The index should exist after the runner finishes.
+    assert versions == sorted(versions), (
+        f"migration discovery must be version-ordered, got {versions}"
+    )
+    # All discovered versions are recorded in schema_migrations.
+    assert _applied_versions(conn) == versions
+    # The m6002 index should exist after the runner finishes.
     assert m6002.INDEX_NAME in _existing_index_names(conn)
 
 
@@ -224,5 +231,11 @@ def test_run_pending_is_idempotent(conn: duckdb.DuckDBPyConnection) -> None:
     """Running the runner twice should apply nothing the second time."""
     first = run_pending_calibration_backtest_migrations(conn)
     second = run_pending_calibration_backtest_migrations(conn)
-    assert len(first) == 2
+    # First call applies every discovered ``m6###`` migration; the count
+    # tracks the number of modules in the migrations package and grows as
+    # new migrations land (m6001, m6002, m6003, ...). The contract this
+    # test guards is the *idempotency* property: a second call applies
+    # zero migrations.
+    assert len(first) >= 2
+    assert {schemas.VERSION_6001, schemas.VERSION_6002}.issubset({m.version for m in first})
     assert len(second) == 0

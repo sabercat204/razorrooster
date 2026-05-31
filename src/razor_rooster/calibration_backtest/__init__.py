@@ -42,6 +42,7 @@ from razor_rooster.calibration_backtest.models import (
     PredictionStatus,
     ReliabilityBin,
     ReliabilityDiagram,
+    RunParameters,
     ScoreSummary,
     SkipReason,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "ReliabilityBin",
     "ReliabilityDiagram",
     "RunIdInputs",
+    "RunParameters",
     "ScoreSummary",
     "SkipReason",
     "canonicalize",

@@ -87,11 +87,70 @@ class MappingNotFoundError(CalibrationBacktestError):
 
 
 class NoPolarityError(CalibrationBacktestError):
-    """Raised when polarity resolution fails for a prediction."""
+    """Raised when polarity resolution fails for a prediction.
+
+    The error stores optional structured context (``prediction_ts``,
+    ``condition_id``, ``class_id``, ``venue``) so callers can surface
+    actionable diagnostics in skip-row metadata and structured logs
+    without re-deriving them. Constructor accepts either a positional
+    ``message`` or keyword-only context fields; when no message is
+    supplied a deterministic message is composed from the kwargs so the
+    base ``CalibrationBacktestError.__init__`` invariant is preserved.
+    """
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        prediction_ts: object = None,
+        condition_id: str | None = None,
+        class_id: str | None = None,
+        venue: str | None = None,
+    ) -> None:
+        if message is None:
+            message = (
+                "no polarity resolution for "
+                f"class_id={class_id!r} condition_id={condition_id!r} "
+                f"venue={venue!r} prediction_ts={prediction_ts!r}"
+            )
+        super().__init__(message)
+        self.prediction_ts = prediction_ts
+        self.condition_id = condition_id
+        self.class_id = class_id
+        self.venue = venue
 
 
 class RecentWindowError(CalibrationBacktestError):
-    """Raised when a backtest window crosses the recent-window guard."""
+    """Raised when a backtest window crosses the recent-window guard.
+
+    Carries optional structured context (``until_ts``, ``cutoff``,
+    ``recommended_until_ts``) so the CLI and replay loop can surface a
+    deterministic remediation message — "the operator could re-run with
+    ``--until <recommended>`` if they choose to". The constructor accepts
+    either a positional ``message`` or keyword-only context fields; when no
+    message is supplied a deterministic message is composed from the
+    kwargs so the base ``CalibrationBacktestError.__init__`` invariant is
+    preserved (REQ-CB-RUN-002, design §3.5).
+    """
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        until_ts: object = None,
+        cutoff: object = None,
+        recommended_until_ts: object = None,
+    ) -> None:
+        if message is None:
+            message = (
+                "until_ts crosses the recent-window guard: "
+                f"until_ts={until_ts!r} cutoff={cutoff!r} "
+                f"recommended_until_ts={recommended_until_ts!r}"
+            )
+        super().__init__(message)
+        self.until_ts = until_ts
+        self.cutoff = cutoff
+        self.recommended_until_ts = recommended_until_ts
 
 
 __all__ = [

@@ -130,10 +130,41 @@ def build_trace(run_id: str, prediction_id: str, payload: Mapping[str, Any]) -> 
     )
 
 
+def encode(trace_dict: Mapping[str, Any]) -> bytes:
+    """Return the zstd-compressed canonical JSON encoding of ``trace_dict``.
+
+    Thin wrapper around :func:`encode_trace` for callers that only need
+    the compressed BLOB and not the decompressed-size sidecar. Used by
+    the replay loop (T-CB-019) when assembling the
+    :class:`BacktestTrace` insert payload alongside an explicit size
+    capture from :func:`encode_trace`.
+
+    The encoding is deterministic: ``encode(payload)`` is byte-identical
+    across replays for the same payload, ``zstandard`` library version,
+    and :data:`COMPRESSION_LEVEL` (D4: zstd level 3).
+    """
+    blob, _decompressed_size_bytes = encode_trace(trace_dict)
+    return blob
+
+
+def decode(blob: bytes, *, algorithm: str = "zstd") -> Mapping[str, Any]:
+    """Alias for :func:`decode_trace` matching the design §3.5 call shape.
+
+    Symmetric counterpart to :func:`encode`: ``decode(encode(t)) == t``
+    under canonical-JSON normalisation. Provided so the replay-loop
+    site reads as ``trace_codec.encode(t)`` / ``trace_codec.decode(b)``
+    while existing call sites that already use :func:`encode_trace` /
+    :func:`decode_trace` continue to work unchanged.
+    """
+    return decode_trace(blob, algorithm=algorithm)
+
+
 __all__ = [
     "COMPRESSION_ALGORITHM",
     "COMPRESSION_LEVEL",
     "build_trace",
+    "decode",
     "decode_trace",
+    "encode",
     "encode_trace",
 ]
