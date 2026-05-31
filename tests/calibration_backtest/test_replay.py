@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import duckdb
 import pytest
@@ -76,12 +76,25 @@ from razor_rooster.polymarket_connector.persistence.schemas import (
     POLYMARKET_RESOLUTIONS_DDL,
 )
 
+if TYPE_CHECKING:
+    from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
+
 # ---------------------------------------------------------------------------
 # Constants and fixtures
 # ---------------------------------------------------------------------------
 
 _NOW = datetime(2026, 5, 31, 12, 0, 0, tzinfo=UTC)
 """Pinned wall-clock for deterministic recent-window guard testing."""
+
+_FAKE_STORE: DuckDBStore = cast("DuckDBStore", object())
+"""Sentinel store passed to ``run_backtest`` in tests that stub the pipeline.
+
+The replay tests in this module monkeypatch
+:func:`evaluate_class_at_frozen_time` (and
+:func:`razor_rooster.calibration_backtest.engines.freezer.freeze`) so the
+``store`` argument never receives a real database call. A typed sentinel
+keeps the mypy ``--strict`` contract honest while preserving the existing
+"no schema setup" testing pattern (see ``run_backtest`` docstring)."""
 
 
 @pytest.fixture
@@ -252,7 +265,7 @@ def test_recent_window_guard_raises_when_until_ts_is_now_and_not_allow_recent(
         allow_recent=False,
     )
     with pytest.raises(RecentWindowError) as exc_info:
-        run_backtest(params, conn=conn, store=object(), now=_NOW)
+        run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW)
     err = exc_info.value
     assert err.until_ts == params.until_ts
     assert err.cutoff == _NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS)
@@ -275,7 +288,7 @@ def test_recent_window_guard_does_not_query_resolutions(
         allow_recent=False,
     )
     with pytest.raises(RecentWindowError):
-        run_backtest(params, conn=conn, store=object(), now=_NOW)
+        run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW)
 
 
 def test_allow_recent_clears_recent_window_guard(
@@ -288,7 +301,7 @@ def test_allow_recent_clears_recent_window_guard(
         until_ts=_NOW,
         allow_recent=True,
     )
-    result = run_backtest(params, conn=conn, store=object(), now=_NOW)
+    result = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW)
     assert result.run.allow_recent is True
     assert result.run.status is BacktestStatus.COMPLETE
 
@@ -306,7 +319,7 @@ def test_recent_window_boundary_equality_admitted(
     )
     # No resolutions seeded — the guard should pass and the loop yields zero
     # predictions, but the run still completes.
-    result = run_backtest(params, conn=conn, store=object(), now=_NOW)
+    result = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW)
     assert result.run.status is BacktestStatus.COMPLETE
     assert result.predictions == ()
 
@@ -523,7 +536,7 @@ def test_run_backtest_integration_three_resolutions_two_classes_six_predictions(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -573,7 +586,7 @@ def test_run_backtest_skips_invalidated_resolution(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -607,7 +620,7 @@ def test_run_backtest_routes_insufficient_data_skip(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -644,7 +657,7 @@ def test_run_backtest_routes_no_polarity_skip(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -676,7 +689,7 @@ def test_run_backtest_routes_source_data_not_frozen_skip(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -707,7 +720,7 @@ def test_run_backtest_routes_insufficient_lag_skip(
         return False
 
     # Patch the bound symbol in the replay module so the loop short-circuits.
-    replay_internal.validate_lag = _always_false  # type: ignore[assignment]
+    replay_internal.validate_lag = _always_false
     try:
         params = _make_params(
             since_ts=ts - timedelta(days=10),
@@ -716,7 +729,7 @@ def test_run_backtest_routes_insufficient_lag_skip(
         result = run_backtest(
             params,
             conn=conn,
-            store=object(),
+            store=_FAKE_STORE,
             now=_NOW,
             max_workers=1,
         )
@@ -724,7 +737,7 @@ def test_run_backtest_routes_insufficient_lag_skip(
         # Restore the original so subsequent tests are not contaminated.
         from razor_rooster.calibration_backtest.engines.lag import validate_lag
 
-        replay_internal.validate_lag = validate_lag  # type: ignore[assignment]
+        replay_internal.validate_lag = validate_lag
 
     assert len(result.predictions) == 1
     prediction = result.predictions[0]
@@ -781,7 +794,7 @@ def test_run_backtest_uses_comparison_resolutions_polarity_when_available(
     result = run_backtest(
         params,
         conn=conn,
-        store=object(),
+        store=_FAKE_STORE,
         now=_NOW,
         max_workers=1,
     )
@@ -852,7 +865,7 @@ def test_run_backtest_run_id_is_64_char_sha256_hex(
         since_ts=_NOW - timedelta(days=180),
         until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
     )
-    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    result = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     assert len(result.run.run_id) == 64
     assert all(ch in "0123456789abcdef" for ch in result.run.run_id)
 
@@ -868,8 +881,8 @@ def test_run_backtest_two_calls_with_identical_params_share_run_id(
         since_ts=_NOW - timedelta(days=180),
         until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
     )
-    first = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
-    second = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    first = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
+    second = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     assert first.run.run_id == second.run.run_id
 
 
@@ -898,8 +911,8 @@ def test_run_backtest_bin_count_does_not_change_run_id(
         bin_count=20,
         bin_count_per_sector={"public_health": 25},
     )
-    a = run_backtest(base, conn=conn, store=object(), now=_NOW, max_workers=1)
-    b = run_backtest(with_bin_override, conn=conn, store=object(), now=_NOW, max_workers=1)
+    a = run_backtest(base, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
+    b = run_backtest(with_bin_override, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     assert a.run.run_id == b.run.run_id
 
 
@@ -918,8 +931,8 @@ def test_run_backtest_lag_days_change_alters_run_id(
         until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
         lag_days=14,
     )
-    a = run_backtest(base, conn=conn, store=object(), now=_NOW, max_workers=1)
-    b = run_backtest(other, conn=conn, store=object(), now=_NOW, max_workers=1)
+    a = run_backtest(base, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
+    b = run_backtest(other, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     assert a.run.run_id != b.run.run_id
 
 
@@ -943,7 +956,7 @@ def test_run_backtest_system_revision_is_resolved_not_hardcoded(
         since_ts=_NOW - timedelta(days=180),
         until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
     )
-    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    result = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     assert result.run.system_revision == sentinel
 
 
@@ -978,7 +991,7 @@ def test_run_backtest_system_revision_consistent_across_in_progress_and_complete
         since_ts=_NOW - timedelta(days=180),
         until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
     )
-    result = run_backtest(params, conn=conn, store=object(), now=_NOW, max_workers=1)
+    result = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
     # The resolver was called exactly once; the run-row carries that value.
     assert call_count["n"] == 1
     assert result.run.system_revision == "sha-1"

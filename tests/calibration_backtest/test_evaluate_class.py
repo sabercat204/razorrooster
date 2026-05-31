@@ -192,7 +192,7 @@ def recorder() -> _CallRecorder:
 
 
 @pytest.fixture
-def store() -> object:
+def store() -> Any:
     """Sentinel store object — the wrapper passes it through unchanged."""
     return object()
 
@@ -236,7 +236,7 @@ def patched_pattern_library(monkeypatch: pytest.MonkeyPatch) -> EventClass:
 def test_wrapper_passes_prediction_ts_as_as_of_ts(
     monkeypatch: pytest.MonkeyPatch,
     recorder: _CallRecorder,
-    store: object,
+    store: Any,
     patched_pattern_library: EventClass,
 ) -> None:
     """The replay wrapper must forward ``prediction_ts`` as the scanner's ``as_of_ts``.
@@ -313,7 +313,7 @@ def test_wrapper_passes_prediction_ts_as_as_of_ts(
 
 def test_wrapper_returns_model_p_and_trace_shape(
     monkeypatch: pytest.MonkeyPatch,
-    store: object,
+    store: Any,
     patched_pattern_library: EventClass,
 ) -> None:
     """Return shape is ``(float, dict)`` with the scanner trace schema."""
@@ -366,7 +366,7 @@ def test_wrapper_returns_model_p_and_trace_shape(
 
 def test_wrapper_raises_insufficient_precursor_data_when_below_min_support(
     monkeypatch: pytest.MonkeyPatch,
-    store: object,
+    store: Any,
     patched_pattern_library: EventClass,
 ) -> None:
     """Below-floor ``current_values`` must raise :class:`InsufficientPrecursorData`."""
@@ -398,7 +398,7 @@ def test_wrapper_raises_insufficient_precursor_data_when_below_min_support(
 
 def test_wrapper_admits_zero_valued_precursors_toward_support(
     monkeypatch: pytest.MonkeyPatch,
-    store: object,
+    store: Any,
     patched_pattern_library: EventClass,
 ) -> None:
     """A zero observation is a valid measurement and counts toward support.
@@ -428,7 +428,7 @@ def test_wrapper_admits_zero_valued_precursors_toward_support(
 
 
 def test_wrapper_rejects_unregistered_class_with_config_error(
-    store: object,
+    store: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unknown ``class_id`` raises :class:`BacktestConfigError`."""
@@ -445,7 +445,7 @@ def test_wrapper_rejects_unregistered_class_with_config_error(
 
 
 def test_wrapper_rejects_min_support_zero(
-    store: object,
+    store: Any,
 ) -> None:
     """``min_support < 1`` is a configuration bug, not a recoverable failure."""
     with pytest.raises(BacktestConfigError):
@@ -460,7 +460,7 @@ def test_wrapper_rejects_min_support_zero(
 
 def test_wrapper_raises_config_error_when_no_base_rate(
     monkeypatch: pytest.MonkeyPatch,
-    store: object,
+    store: Any,
 ) -> None:
     """Missing base rate is reported as :class:`BacktestConfigError`.
 
@@ -493,7 +493,7 @@ def test_wrapper_raises_config_error_when_no_base_rate(
 
 def test_wrapper_falls_back_to_latest_when_pinned_version_missing(
     monkeypatch: pytest.MonkeyPatch,
-    store: object,
+    store: Any,
 ) -> None:
     """Version-pin miss falls back to latest-row lookup, mirroring the live scanner.
 
