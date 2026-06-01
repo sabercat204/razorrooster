@@ -437,25 +437,34 @@ An integration test (Section 4.2) statically asserts that `grep -r "from calibra
 
 ### 3.16 Meta-Class Query (REQ-CB-PL-001)
 
-The `polymarket_resolution_calibration` meta-class in `pattern_library` upgrades from a synthetic precursor placeholder to a real-occurrence query against the comparison/resolution tables. The meta-class owns its query; calibration_backtest provides no helper. The query shape:
+The `polymarket_resolution_calibration` meta-class in `pattern_library` upgrades from a synthetic precursor placeholder to a real-occurrence query against the comparison/resolution tables. The meta-class owns its query; calibration_backtest provides no helper. The query shape (corrected per Phase 3 + Phase 7 scout amendments):
 
 ```sql
 SELECT
-  cr.condition_id,
-  cr.class_id,
+  c.condition_id,
+  c.class_id,
   cr.polarity_at_comparison,
-  pr.outcome,
-  pr.resolution_ts,
+  pr.winning_outcome_label,
+  pr.resolution_ts AS occurrence_ts,
   pr.invalidated
 FROM comparison_resolutions cr
-JOIN polymarket_resolutions pr
-  ON pr.condition_id = cr.condition_id
-WHERE pr.resolution_ts BETWEEN :since_ts AND :until_ts
-  AND pr.invalidated = FALSE
-  AND cr.class_id = :class_id
+JOIN comparisons c USING (comparison_id)
+JOIN polymarket_resolutions pr USING (condition_id)
+WHERE pr.invalidated = FALSE
+  AND pr.superseded_at IS NULL
 ```
 
-The meta-class then computes its own `(model_p, observed)` pair using the polarity-corrected outcome. The query lives in `pattern_library/classes/meta/polymarket_resolution_calibration.py` and is exercised by a unit test in pattern_library's suite, not in calibration_backtest's suite, preserving the directional dependency in Section 3.15.
+Notes on this corrected SQL (vs the prior draft that had four wrong tokens):
+- Three-table join: `comparison_resolutions` has no `class_id` column; it must come from `comparisons` via FK on `comparison_id`.
+- The polymarket_resolutions outcome column is `winning_outcome_label`, NOT `outcome`.
+- `pr.superseded_at IS NULL` matches the `data_ingest` provenance convention used elsewhere.
+- **No bind parameters.** The `OccurrenceQuery` protocol in `pattern_library/models/event_class.py` is `Callable[[duckdb.DuckDBPyConnection], pd.DataFrame]` — single-arg. Time-window filtering happens downstream via `pattern_library.engines.refresh._count_in_window`. The `class_id` filter is also redundant since the meta-class is bound to its own class.
+
+The meta-class then computes its own `(model_p, observed)` pair using the polarity-corrected outcome. The polarity correction MUST re-derive observed from raw `pr.winning_outcome_label` + `cr.polarity_at_comparison`; reading `cr.outcome_observed` (already polarity-adjusted at write time per `mispricing_detector/models.py:148-149`) and applying `polarity_at_comparison` again would double-correct silently.
+
+The query lives in `pattern_library/classes/polymarket_resolution_calibration.py` (flat path; the registry's `pkgutil.iter_modules` does not recurse, so a `meta/` subpackage would silently NOT register). It is exercised by a unit test in pattern_library's suite, not in calibration_backtest's suite, preserving the directional dependency in Section 3.15.
+
+The upgrade also bumps the meta-class's `definition_version` from 1 to 2 so the semantic change (empty stub → real query) propagates through `compute_run_id` per REQ-CB-FREEZE-003. Without the bump, cached `backtest_runs` rows from the stub era would be silently reused.
 
 ### 3.17 Properties
 

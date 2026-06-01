@@ -816,97 +816,149 @@ Task IDs prefixed `T-CB-NNN`.
 
 ### T-CB-042 — Implement polymarket_resolution_calibration._occurrences SQL query
 **Depends on:** Phase 1 (T-CB-001..T-CB-006).
-**References:** REQ-CB-PL-001, design §3.16, OQ-CB-002, OQ-CB-005.
+**References:** REQ-CB-PL-001, REQ-CB-FREEZE-003, design §3.16, OQ-CB-002, OQ-CB-005.
 
-> **Scout amendment (2026-05-31):** `comparison_resolutions` does NOT have a `class_id` column — it must be derived by joining through the `comparisons` table on `comparison_id`. The query is therefore a **three-table** join, not two. Note: until `mispricing_detector` linkage matures, some predictions may not flow into `comparison_resolutions`; treat coverage as expected partial, not a defect.
+> **Scout amendment (2026-05-31, Phase 3):** `comparison_resolutions` does NOT have a `class_id` column — it must be derived by joining through the `comparisons` table on `comparison_id`. The query is therefore a **three-table** join, not two. Until `mispricing_detector` linkage matures, some predictions may not flow into `comparison_resolutions`; treat coverage as expected partial, not a defect.
+>
+> **Scout amendment (2026-06-01, Phase 7):** four additional drift items the prior amendment missed:
+> 1. **Column rename:** the real `polymarket_resolutions` column is `winning_outcome_label`, NOT `pr.outcome` (design §3.16 was wrong; verified against `polymarket_connector/persistence/schemas.py`).
+> 2. **Protocol contract is `(conn) -> DataFrame`:** the `OccurrenceQuery` protocol at `pattern_library/models/event_class.py:69` is a single-arg callable; `refresh.py:314` and `base_rates.py:85` both call `cls.occurrence_query(conn)` with no extra args. **DO NOT add `:since_ts/:until_ts/:class_id` bind parameters** — that would break the protocol and the seven other seed classes plus T-CB-047's `mypy --strict` check. Time-window filtering happens downstream via `refresh._count_in_window`. The `class_id` filter is also redundant — `_occurrences` is bound to its own class.
+> 3. **File path: no `meta/` subpackage.** The file lives at `pattern_library/classes/polymarket_resolution_calibration.py` (flat). The registry's `pkgutil.iter_modules` at `pattern_library/registry.py:245` does NOT recurse into subpackages — adding a `meta/` subdir would silently NOT register the meta-class.
+> 4. **Polarity double-correction trap:** `comparison_resolutions.outcome_observed` is **already polarity-adjusted at write time** (per `mispricing_detector/models.py:148-149`). The meta-class must read raw `pr.winning_outcome_label` and apply `cr.polarity_at_comparison` itself. Reading `cr.outcome_observed` plus `cr.polarity_at_comparison` would apply polarity twice — silent calibration corruption with no error raised.
 
 **Deliverables:**
-- `pattern_library/classes/polymarket_resolution_calibration.py::_occurrences` replaces the empty-frame stub with a real DuckDB query.
-- **Three-table join:** `comparison_resolutions cr JOIN comparisons c USING (comparison_id) JOIN polymarket_resolutions pr USING (condition_id)`.
-- Filters: `pr.resolution_ts BETWEEN :since_ts AND :until_ts`, `pr.invalidated = FALSE`, `c.class_id = :class_id`, `pr.superseded_at IS NULL`.
-- Selects: `c.condition_id`, `c.class_id`, `cr.polarity_at_comparison`, `pr.winning_outcome_label`, `pr.resolution_ts AS occurrence_ts`, `pr.invalidated`.
-- Computes `(model_p, observed)` pair using `polarity_at_comparison` per design §3.16.
-- Returns DataFrame with the documented column set.
-- Empty-frame fallback removed.
-- Module docstring documents linkage-coverage caveat (some comparisons may lack `comparison_resolutions` rows until linkage pass matures — partial coverage is expected, not a defect).
-**Verification:** seeded fixture produces non-empty DataFrame; column set matches spec; `class_id` correctly derived from `comparisons` table.
+- `pattern_library/classes/polymarket_resolution_calibration.py::_occurrences(_conn)` replaces the empty-frame stub with a real DuckDB query. Signature stays `(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame` — single-arg per `OccurrenceQuery` protocol.
+- **Three-table join (no bind parameters):**
+  ```sql
+  SELECT
+    c.condition_id,
+    c.class_id,
+    cr.polarity_at_comparison,
+    pr.winning_outcome_label,
+    pr.resolution_ts AS occurrence_ts,
+    pr.invalidated
+  FROM comparison_resolutions cr
+  JOIN comparisons c USING (comparison_id)
+  JOIN polymarket_resolutions pr USING (condition_id)
+  WHERE pr.invalidated = FALSE
+    AND pr.superseded_at IS NULL
+  ```
+- Returns ALL occurrences across history; `refresh._count_in_window` applies time filtering downstream.
+- Mirrors the `eia_grid_reliability_event.py:39-56` idiom (`conn.execute(...).fetchall()` then construct DataFrame manually) for consistency with the other seven seed classes.
+- Module docstring documents the linkage-coverage caveat (some comparisons may lack `comparison_resolutions` rows until linkage pass matures — partial coverage is expected, not a defect).
+- **`definition_version` bump (REQ-CB-FREEZE-003):** in the `EventClass(...)` literal at `polymarket_resolution_calibration.py:43-60`, bump `definition_version` from `1` to `2`. The semantic change (empty stub → real query) MUST propagate through `compute_run_id` so cached `backtest_runs` rows from the stub era do not get silently reused. `replay.py::_resolve_class_definition_versions` (lines 1382-1414) reads `pl_event_classes.definition_version` to seed `compute_run_id`'s `class_definition_versions` input, but ONLY if the operator both bumps the integer AND a `registry.sync_to_store` runs.
+- Polarity correction: do NOT read `cr.outcome_observed` (already corrected). Use raw `pr.winning_outcome_label` ('yes'/'no') and apply `cr.polarity_at_comparison` ('direct'/'inverted') in pattern_library code (not SQL) per the matrix in T-CB-045.
+**Verification:**
+- Seeded fixture produces non-empty DataFrame; column set matches spec; `class_id` correctly derived from `comparisons` table.
+- Regression test: `compute_run_id` returns a different SHA-256 hex digest before vs after the `definition_version` bump (holds all other params constant).
+- mypy --strict on the upgraded file is clean (signature must remain `(conn) -> DataFrame`).
 **Out of scope:** test fixture (T-CB-043).
 
 ### T-CB-043 — Add unit test for polymarket_resolution_calibration._occurrences upgrade
 **Depends on:** T-CB-042.
 **References:** REQ-CB-PL-001, design §4.2.
+
+> **Scout amendment (2026-06-01, Phase 7):** test path is `tests/pattern_library/` (NOT `pattern_library/tests/` — the in-package directory does not exist; `pytest pattern_library/tests/` would no-op). Existing `populated_store` fixture at `tests/pattern_library/test_end_to_end_refresh.py:53-84` and the seed-class fixture at `tests/pattern_library/test_seed_classes.py:62-74` do NOT run mispricing_detector migrations, so `comparisons` and `comparison_resolutions` tables don't exist in those fixtures. After the upgrade, `_occurrences` would raise `Catalog Error` cascading into 5+ pattern_library/signal_scanner tests. **Decision: extend the fixtures with `run_pending_mispricing_detector_migrations` rather than adding defensive `try/except CatalogException` to `_occurrences`** — the fixture extension is more realistic and doesn't mask production schema bugs.
+
 **Deliverables:**
-- `pattern_library/tests/` fixture seeding `comparison_resolutions` and `polymarket_resolutions` rows.
-- Seed `comparison_resolutions` with `condition_id`, `class_id`, `polarity_at_comparison='direct'`, `resolution_outcome='yes'`.
-- Seed matching `polymarket_resolutions` row with `invalidated=FALSE`, `winning_outcome_label='yes'`.
-- Invoke `polymarket_resolution_calibration._occurrences(_conn)` against the fixture.
-- Assert returned DataFrame contains exactly one row with correct fields.
-- Assert empty-frame fallback no longer reachable (no conditional returning empty DataFrame).
-- Add test for `invalidated=TRUE` confirming filtering.
-**Verification:** test green.
+- New test module at `tests/pattern_library/test_polymarket_resolution_calibration.py` (NOT `pattern_library/tests/...`).
+- Seed `comparisons` row with `comparison_id`, `cycle_id`, `mapping_id`, `class_id`, `condition_id` (via `mispricing_detector.persistence.operations.persist_comparison`).
+- Seed `comparison_resolutions` row matching by `comparison_id` with `polarity_at_comparison='direct'`, `resolution_outcome='yes'` (via `write_resolution_link`).
+- Seed matching `polymarket_resolutions` row with same `condition_id`, `invalidated=FALSE`, `winning_outcome_label='yes'`, `superseded_at IS NULL`.
+- Invoke `polymarket_resolution_calibration._occurrences(conn)` against the fixture (single-arg signature).
+- Assert returned DataFrame contains exactly one row with the expected `class_id`, `condition_id`, `polarity_at_comparison`, `winning_outcome_label`, `occurrence_ts`.
+- Assert no conditional empty-frame fallback path exists in production code (AST grep for `pd.DataFrame({"occurrence_ts": pd.to_datetime([], utc=True)})` returns zero matches in `polymarket_resolution_calibration.py`).
+- Add test for `invalidated=TRUE` row confirming filtering.
+- **Fixture extension:** update `tests/pattern_library/test_end_to_end_refresh.py::populated_store` and `tests/pattern_library/test_seed_classes.py` shared fixture to ALSO run `run_pending_mispricing_migrations` (in addition to data_ingest, polymarket, pattern_library migrations). Confirms `comparisons` and `comparison_resolutions` tables exist for refresh to succeed.
+**Verification:** test green; existing pattern_library tests still pass after fixture extension; AST grep confirms empty-frame fallback removed from production code.
 **Out of scope:** circular-dependency check (T-CB-044).
 
 ### T-CB-044 — Validate no circular dependency in pattern_library meta-class
 **Depends on:** T-CB-042.
 **References:** REQ-CB-PL-002, design §3.15, §3.2.
+
+> **Scout amendment (2026-06-01, Phase 7):** use the canonical 7-package list (per REQ-CB-PL-002 reconciliation): `pattern_library, signal_scanner, mispricing_detector, polymarket_connector, data_ingest, report_generator, position_engine`. The same list is referenced by T-CB-054.
+
 **Deliverables:**
-- Static import check: `grep -r 'from razor_rooster.calibration_backtest' pattern_library/` returns zero matches.
-- AST-level check: no `import calibration_backtest` statements in `pattern_library/`.
-- `_occurrences` does not invoke any `calibration_backtest.*` symbols.
-- DuckDB connection (`_conn`) is the sole external dependency passed to `_occurrences`.
-- Inline comments document REQ-CB-PL-002 compliance and the §3.2 reuse pattern.
-- Test asserts no back-edge exists (greps for both `from calibration_backtest` and `import calibration_backtest`).
-**Verification:** static and AST checks pass; no back-edge introduced.
+- Static import check across all 7 canonical packages: `grep -rE '^(from razor_rooster\.calibration_backtest|import razor_rooster\.calibration_backtest)' src/razor_rooster/{pattern_library,signal_scanner,mispricing_detector,polymarket_connector,data_ingest,report_generator,position_engine}/` returns zero matches.
+- AST-level check on each package's `__init__.py` and submodule files: no `import calibration_backtest` or `from razor_rooster.calibration_backtest` statements anywhere.
+- `_occurrences` does not invoke any `calibration_backtest.*` symbols (AST scan of `polymarket_resolution_calibration.py`).
+- DuckDB connection (`conn`) is the sole external dependency passed to `_occurrences` (signature is `(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame`).
+- Inline comments at the top of `polymarket_resolution_calibration.py` document REQ-CB-PL-002 compliance and the §3.2 reuse pattern.
+- New test in `tests/pattern_library/test_no_back_edge.py` programmatically asserts no back-edge across all 7 packages.
+**Verification:** static + AST checks pass; no back-edge introduced; pytest test green.
 **Out of scope:** other meta-classes.
 
 ### T-CB-045 — Verify polarity-correction semantics in meta-class output
 **Depends on:** T-CB-043.
 **References:** REQ-CB-PL-001, REQ-CB-REPLAY-003, design §3.16, OQ-CB-005.
+
+> **Scout amendment (2026-06-01, Phase 7):** explicit anti-pattern — **never read `cr.outcome_observed`** in the meta-class. That column is already polarity-adjusted at write time (per `mispricing_detector/models.py:148-149`), so reading it AND applying `cr.polarity_at_comparison` yields silent double-correction. Always re-derive observed from raw `pr.winning_outcome_label` + `cr.polarity_at_comparison`.
+
 **Deliverables:**
-- Test cases covering `polarity_at_comparison in {'direct','inverted'}` paired with `winning_outcome_label in {'yes','no'}`.
-- For `polarity='direct'`: `'yes'` → `observed=1.0`, `'no'` → `observed=0.0`.
-- For `polarity='inverted'`: `'yes'` → `observed=0.0`, `'no'` → `observed=1.0`.
-- Asserts the DataFrame returned by `_occurrences` honors this convention.
-- `(model_p, observed)` pairs computable from the returned row per §3.16.
+- 4-cell parametrized test covering `polarity_at_comparison in {'direct','inverted'}` × `winning_outcome_label in {'yes','no'}`:
+  - `polarity='direct'` + `'yes'` → `observed=1.0`
+  - `polarity='direct'` + `'no'` → `observed=0.0`
+  - `polarity='inverted'` + `'yes'` → `observed=0.0`
+  - `polarity='inverted'` + `'no'` → `observed=1.0`
+- The test asserts the helper that consumes `_occurrences` rows (or the meta-class's own polarity-correction step) computes `observed` correctly from the four input cells.
+- `(model_p, observed)` pairs are computable from the returned row per §3.16.
 - Compares against hand-computed reference data.
-**Verification:** all four polarity × outcome combinations match expected `observed` values.
+- **Anti-pattern guard:** AST grep on `pattern_library/classes/polymarket_resolution_calibration.py` confirms NO read of `cr.outcome_observed` — meta-class must re-derive from raw `winning_outcome_label`. (The column is allowed in fixtures and elsewhere; only the meta-class itself is forbidden from reading it.)
+**Verification:** all four polarity × outcome combinations match expected `observed` values; AST grep returns zero `outcome_observed` references in the upgraded production file.
 **Out of scope:** integration testing (T-CB-046).
 
 ### T-CB-046 — Integration test: meta-class occurrence count matches comparison_resolutions join
 **Depends on:** T-CB-043.
 **References:** REQ-CB-PL-001, design §4.2.
+
+> **Scout amendment (2026-06-01, Phase 7):** disambiguate canonical join. There are two readers in the codebase: (a) `calibration_backtest/engines/polarity.py:62-72` uses **inner join** on `comparison_id` filtered by `pr.resolution_ts`; (b) `report_generator/engines/section_assemblers/calibration.py:81-89` uses **LEFT JOIN** on `comparisons` filtered by `r.linked_at`. **The canonical reader is (a) — `polarity.py`'s inner-join semantics.** The meta-class mirrors the polarity.py join exactly (post-Phase 7 amendment: three-table inner join, no time filter in SQL — refresh applies it downstream). The row-count assertion is also tightened: replace `floor(N/2) ± 1` with seeded data structured for an exact midpoint split.
+
 **Deliverables:**
-- Seed `comparison_resolutions` with N rows spanning a known `resolution_ts` range and specific `class_id`.
-- Seed `polymarket_resolutions` with matching `invalidated=FALSE` rows.
-- Invoke `_occurrences` with `since_ts/until_ts` matching the seed; assert row count == N.
-- Re-invoke with narrowed `until_ts` excluding half the data; assert row count is `floor(N/2) ± 1`.
-- Mix in a single `invalidated=TRUE` row; assert it is filtered out.
-**Verification:** all assertions pass.
+- Seed `comparisons` rows with N entries (use even N, e.g., N=10).
+- Seed `comparison_resolutions` rows linking each comparison; spread `resolution_ts` evenly across a known range with an exact midpoint timestamp `t_mid`.
+- Seed matching `polymarket_resolutions` rows with `invalidated=FALSE`.
+- Invoke `_occurrences(conn)` (single-arg) and assert row count == N.
+- Verify time filtering happens DOWNSTREAM (refresh applies `_count_in_window`); the meta-class itself returns ALL N rows.
+- Apply `_count_in_window(occurrences_df, t_start, t_mid)` independently and assert exactly N/2 rows match (with even N and midpoint timestamp, the count is deterministic — no `±1` slop).
+- Mix in 1 `invalidated=TRUE` row; assert `_occurrences(conn)` excludes it (returns N rows even with N+1 seeded total).
+- **Partial-coverage test:** seed an extra `polymarket_resolutions` row WITHOUT a matching `comparison_resolutions` row; assert `_occurrences(conn)` excludes it (the inner join filters the unlinked resolution). Document this as the partial-coverage caveat from the T-CB-042 amendment.
+- **Canonical-join cross-check:** assert that `_occurrences(conn)`'s row set equals (within ordering) the same query issued by `polarity.resolve`'s underlying SQL pattern (3-table inner join). Catches drift if either side mutates the join semantics later.
+**Verification:** all assertions pass; row count is exact (no `±1` slop); partial-coverage caveat exercised.
 **Out of scope:** lint gates (T-CB-047).
 
 ### T-CB-047 — Lint and type-check pattern_library upgrade
 **Depends on:** T-CB-042, T-CB-043, T-CB-044, T-CB-045, T-CB-046.
 **References:** REQ-CB-PL-001.
+
+> **Scout amendment (2026-06-01, Phase 7):** test path is `tests/pattern_library/`, NOT `pattern_library/tests/`. Match CI's hard-gate verbatim.
+
 **Deliverables:**
-- `mypy --strict pattern_library/classes/polymarket_resolution_calibration.py` clean.
-- `ruff check` and `ruff format` clean on the upgraded file.
-- No new import statements introduce circular dependencies (mypy import-graph check if available).
-- Function signatures conform to the `EventClass` `occurrence_query` protocol.
-- `pytest pattern_library/tests/` green; no regressions in other classes.
+- `mypy --strict src/razor_rooster/pattern_library/classes/polymarket_resolution_calibration.py` clean.
+- `ruff check src tests` clean (repo-wide).
+- `ruff format --check src tests` clean.
+- No new import statements introduce circular dependencies (T-CB-044 AST guard runs before lint).
+- Function signature conforms to the `EventClass.occurrence_query` protocol: `(conn: duckdb.DuckDBPyConnection) -> pd.DataFrame`. Adding parameters fails the type contract.
+- `pytest tests/pattern_library/` green; no regressions in other classes.
+- `pytest tests/calibration_backtest/` green (replay's `_resolve_class_definition_versions` must still find the bumped `definition_version=2` after the upgrade).
 **Verification:** all gates green.
 **Out of scope:** acceptance regression suite (T-CB-048).
 
 ### T-CB-048 — Run pattern_library test suite; verify no regressions
 **Depends on:** T-CB-047.
 **References:** REQ-CB-PL-001, REQ-CB-PL-002, design §4.2.
+
+> **Scout amendment (2026-06-01, Phase 7):** test path is `tests/pattern_library/`. Coverage gate previously had no numeric threshold ("any non-zero coverage on the new lines"); tighten to >= 90% line coverage on the new `_occurrences` SQL block. Reconcile REQ-CB-PL-002 package list with DESIGN.md §4.2 — the canonical list is **7 packages**: `pattern_library, signal_scanner, mispricing_detector, polymarket_connector, data_ingest, report_generator, position_engine`.
+
 **Deliverables:**
-- Execute `pytest pattern_library/tests/` (unit + integration).
-- All existing `pattern_library` tests continue to pass (no broken imports, no schema mismatches).
-- Static import-graph test (§4.2 "No circular dependency") passes.
+- Execute `pytest tests/pattern_library/` (unit + integration).
+- All existing pattern_library tests continue to pass (no broken imports, no schema mismatches after the fixture extension).
+- Static import-graph test (§4.2 "No circular dependency") passes for all **7 canonical packages** (NOT the 5-package list in REQ-CB-PL-002 — that's now reconciled).
 - Meta-class is callable within the `pattern_library` refresh loop without errors.
-- Coverage report exercises new `_occurrences` paths.
-- CHANGELOG entry records REQ-CB-PL-001 and REQ-CB-PL-002 gate completion.
-**Verification:** suite green; coverage non-regressed.
+- **Coverage gate:** `_occurrences` new SQL block must have >= 90% line coverage in `tests/pattern_library/` runs.
+- CHANGELOG entry records REQ-CB-PL-001 and REQ-CB-PL-002 gate completion, citing both the Phase 3 and Phase 7 scout amendments.
+- **Determinism re-run gate:** running the calibration_backtest test suite (`tests/calibration_backtest/`) before vs after the `definition_version` bump produces different `run_id` values for any `RunParameters` referencing `polymarket_resolution_calibration`. This proves REQ-CB-FREEZE-003 propagation.
+**Verification:** suite green; coverage >= 90% on the new SQL; determinism re-run gate confirms hash difference.
 **Out of scope:** acceptance gate (Phase 8).
 
 ## Phase 8 — Acceptance

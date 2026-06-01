@@ -242,13 +242,15 @@ The GUI shall expose `/calibration-backtest` listing recent runs (run_id, parame
 
 **REQ-CB-PL-001 — Real occurrences for the meta-class**
 
-`pattern_library/classes/polymarket_resolution_calibration.py`'s `_occurrences` function shall be upgraded from the empty-frame stub to a real query that joins `comparison_resolutions` to `polymarket_resolutions`, returning resolved markets that had a logged comparison.
-- Verification: unit test against a seeded comparison_resolutions row confirms the upgraded `_occurrences` returns it; the empty-frame fallback path is removed.
+`pattern_library/classes/polymarket_resolution_calibration.py`'s `_occurrences` function shall be upgraded from the empty-frame stub to a real query joining `comparison_resolutions` -> `comparisons` -> `polymarket_resolutions`, returning resolved markets that had a logged comparison. The function preserves the `OccurrenceQuery` protocol signature `(conn) -> DataFrame` (no bind parameters); time-window filtering happens downstream via `pattern_library.engines.refresh._count_in_window`. The meta-class also bumps its `definition_version` from 1 to 2 so the semantic change propagates through `compute_run_id` per REQ-CB-FREEZE-003.
+- Verification: three test surfaces — (a) unit test against a seeded `comparison_resolutions` + `comparisons` + `polymarket_resolutions` row confirms the upgraded `_occurrences` returns it; (b) polarity matrix test (4 cells: direct/inverted × yes/no) confirms `(model_p, observed)` is computed correctly without reading `cr.outcome_observed`; (c) integration count check seeds N rows and confirms `_occurrences` returns N (with exact midpoint split when filtered downstream). The empty-frame fallback path is removed from production code (AST grep returns zero matches).
 
 **REQ-CB-PL-002 — No circular dependency**
 
-`calibration_backtest` may consume from `pattern_library`, `signal_scanner`, `mispricing_detector`, `polymarket_connector`, and `data_ingest`. None of those subsystems may import from `calibration_backtest`. The pattern_library meta-class upgrade in REQ-CB-PL-001 must not introduce such a back-edge — the meta-class queries DuckDB directly, not through `calibration_backtest`.
-- Verification: import graph test confirms no `from razor_rooster.calibration_backtest` import appears in any of the listed modules.
+`calibration_backtest` may consume from `pattern_library`, `signal_scanner`, `mispricing_detector`, `polymarket_connector`, `data_ingest`, `report_generator`, and `position_engine`. None of those **seven** subsystems may import from `calibration_backtest`. The pattern_library meta-class upgrade in REQ-CB-PL-001 must not introduce such a back-edge — the meta-class queries DuckDB directly, not through `calibration_backtest`.
+
+The 7-package list reconciles a prior drift between this requirement (5 packages) and `CALIBRATION_BACKTEST_DESIGN.md` §4.2 (7 packages — added `report_generator` and `position_engine`). The 7-package list is canonical going forward; T-CB-044 and T-CB-054's import-graph tests both reference this list.
+- Verification: import graph test confirms no `from razor_rooster.calibration_backtest` import appears in any of the seven listed modules.
 
 ### 5.8 Performance (REQ-CB-PERF-*)
 
