@@ -38,6 +38,10 @@ Failure-mode summary (cross-references to design doc / requirements):
   write (wraps the underlying DuckDB error message).
 * ``BacktestConfigError`` — invalid configuration, parameter, or CLI
   flag combination detected before the run starts.
+* ``RunNotFoundError`` — the persistence layer found no
+  ``backtest_runs`` row for the requested ``run_id``; raised by CLI
+  ``show`` / ``compare`` paths and mapped to exit code 1
+  (design §3.9).
 """
 
 from __future__ import annotations
@@ -120,6 +124,21 @@ class NoPolarityError(CalibrationBacktestError):
         self.venue = venue
 
 
+class RunNotFoundError(CalibrationBacktestError):
+    """Raised when a ``backtest_runs`` row for *run_id* does not exist.
+
+    Used by the CLI ``show`` / ``compare`` / ``prune`` paths to surface a
+    deterministic "run not found" message and to trigger exit code 1
+    (usage error). The offending ``run_id`` is preserved on
+    :attr:`run_id` so structured-log capture can include it without
+    re-parsing the message.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"Run not found: {run_id}")
+        self.run_id = run_id
+
+
 class RecentWindowError(CalibrationBacktestError):
     """Raised when a backtest window crosses the recent-window guard.
 
@@ -165,4 +184,5 @@ __all__ = [
     "MappingNotFoundError",
     "NoPolarityError",
     "RecentWindowError",
+    "RunNotFoundError",
 ]
