@@ -182,6 +182,10 @@ def _seed_analysis_with_resolution(
             conn,
             analysis_id=analysis_id,
             state=initial_state,  # type: ignore[arg-type]
+            when=now,  # pin to the deterministic seed clock; default
+            # (datetime.now(tz=UTC)) is wall-clock-dependent and breaks
+            # latest_watch_state ordering once real time passes the
+            # expiration `now=` value used in the test assertions.
         )
         write_resolution_link(
             conn,
