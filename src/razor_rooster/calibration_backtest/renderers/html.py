@@ -18,18 +18,15 @@ from __future__ import annotations
 import html as _html_module
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
 
-from razor_rooster.calibration_backtest.errors import BacktestConfigError
 from razor_rooster.calibration_backtest.frame import (
     DISCLAIMER,
     FOOTER_NOTE,
     check_cli_framing,
 )
-from razor_rooster.calibration_backtest.models import (
-    BacktestRun,
-    ReliabilityBin,
-    ReliabilityDiagram,
+from razor_rooster.calibration_backtest.models import BacktestRun
+from razor_rooster.calibration_backtest.renderers._diagram_hydrate import (
+    reliability_diagrams_from_run as _reliability_diagrams_from_run,
 )
 from razor_rooster.calibration_backtest.renderers.reliability_svg import (
     render_reliability_svg,
@@ -297,68 +294,6 @@ def _fallback_polarity_rate(run: BacktestRun) -> float | None:
     if run.predictions_scored <= 0:
         return None
     return run.fallback_polarity_count / run.predictions_scored
-
-
-def _reliability_diagrams_from_run(run: BacktestRun) -> Mapping[str, ReliabilityDiagram]:
-    """Hydrate ``ReliabilityDiagram`` objects from the persisted summary.
-
-    The summary's reliability-diagram payload is the dict shape produced
-    by :func:`models._reliability_diagram_to_mapping`. The renderer
-    rebuilds typed :class:`ReliabilityDiagram` instances so the SVG
-    helper consumes the same value type the in-memory scoring path
-    emits. Malformed entries are silently skipped — the operator
-    surfaces them via the JSON renderer instead.
-    """
-
-    summary = run.summary_json or {}
-    if not isinstance(summary, dict):
-        return {}
-    raw = summary.get("reliability_diagrams")
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, ReliabilityDiagram] = {}
-    for sector, payload in raw.items():
-        diagram = _hydrate_diagram(payload)
-        if diagram is not None:
-            out[str(sector)] = diagram
-    return out
-
-
-def _hydrate_diagram(payload: Any) -> ReliabilityDiagram | None:
-    if not isinstance(payload, dict):
-        return None
-    bin_count = payload.get("bin_count")
-    bins_raw = payload.get("bins")
-    if not isinstance(bin_count, int) or not isinstance(bins_raw, list):
-        return None
-    bins: list[ReliabilityBin] = []
-    for entry in bins_raw:
-        if not isinstance(entry, dict):
-            return None
-        try:
-            bins.append(
-                ReliabilityBin(
-                    lower_p=float(entry["lower_p"]),
-                    upper_p=float(entry["upper_p"]),
-                    count=int(entry["count"]),
-                    mean_predicted_p=(
-                        float(entry["mean_predicted_p"])
-                        if entry.get("mean_predicted_p") is not None
-                        else None
-                    ),
-                    empirical_rate=(
-                        float(entry["empirical_rate"])
-                        if entry.get("empirical_rate") is not None
-                        else None
-                    ),
-                )
-            )
-        except (KeyError, TypeError, ValueError, BacktestConfigError):
-            return None
-    try:
-        return ReliabilityDiagram(bin_count=bin_count, bins=tuple(bins))
-    except BacktestConfigError:
-        return None
 
 
 def _iso(ts: datetime) -> str:

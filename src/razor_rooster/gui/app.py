@@ -135,6 +135,9 @@ def _register_routes(app: FastAPI) -> None:
     can't bite during app construction.
     """
     from razor_rooster.gui.routes.calibration import router as calibration_router
+    from razor_rooster.gui.routes.calibration_backtest import (
+        router as calibration_backtest_router,
+    )
     from razor_rooster.gui.routes.compare import router as compare_router
     from razor_rooster.gui.routes.digest import router as digest_router
     from razor_rooster.gui.routes.index import router as index_router
@@ -147,6 +150,7 @@ def _register_routes(app: FastAPI) -> None:
     app.include_router(digest_router)
     app.include_router(watch_router)
     app.include_router(calibration_router)
+    app.include_router(calibration_backtest_router)
 
 
 __all__ = ["LinterMiddleware", "create_app"]

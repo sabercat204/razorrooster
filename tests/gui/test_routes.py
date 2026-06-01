@@ -283,7 +283,7 @@ def test_no_state_mutation_routes_registered(client: TestClient) -> None:
     app = client.app
     # Walk the route table.
     for route in app.routes:  # type: ignore[attr-defined]
-        methods = getattr(route, "methods", set()) or set()
+        methods: set[str] = getattr(route, "methods", set()) or set()
         assert "POST" not in methods, f"POST route registered: {route}"
         assert "PUT" not in methods, f"PUT route registered: {route}"
         assert "DELETE" not in methods, f"DELETE route registered: {route}"

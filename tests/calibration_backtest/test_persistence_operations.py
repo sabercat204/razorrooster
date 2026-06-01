@@ -559,6 +559,25 @@ def test_list_runs_zero_limit_returns_empty(conn: duckdb.DuckDBPyConnection) -> 
     assert operations.list_runs(conn, limit=0) == ()
 
 
+def test_list_runs_offset_skips_rows(conn: duckdb.DuckDBPyConnection) -> None:
+    for i in range(5):
+        operations.insert_run(
+            conn,
+            _make_run(
+                run_id=f"run-{i}",
+                started_at=_STARTED + timedelta(hours=i),
+            ),
+        )
+    # ``started_at DESC`` orders newest first; offset=2 skips run-4, run-3.
+    page = operations.list_runs(conn, limit=2, offset=2)
+    assert [r.run_id for r in page] == ["run-2", "run-1"]
+
+
+def test_list_runs_negative_offset_raises(conn: duckdb.DuckDBPyConnection) -> None:
+    with pytest.raises(BacktestPersistenceError, match="offset"):
+        operations.list_runs(conn, offset=-1)
+
+
 # ---------------------------------------------------------------------------
 # Append-only contract — no deletion / drop / removal helpers
 # ---------------------------------------------------------------------------
