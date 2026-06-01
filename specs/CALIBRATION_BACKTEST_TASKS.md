@@ -639,98 +639,177 @@ Task IDs prefixed `T-CB-NNN`.
 
 > The GUI phase implements two read-only routes for listing and viewing calibration backtest runs. All renders pass through the framing linter (REQ-CB-CLI-002), include standard disclaimer blocks (REQ-CB-CLI-003), and reuse operator auth from `report_generator`. Tasks address REQ-CB-CLI-004 (GUI surface).
 
-### T-CB-035 — Scaffold GUI module and routes foundation
-**Depends on:** Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027).
+### T-CB-035 — Scaffold GUI router and route module
+**Depends on:** Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027), Phase 5 (T-CB-028..T-CB-034 — provides `frame.py`, `renderers/reliability_svg.py`, `RunNotFoundError`).
 **References:** REQ-CB-CLI-004, design §3.14, §3.15.
+
+> **Scout amendment (2026-05-31):** the GUI is **FastAPI** (not Flask). It uses **APIRouter** registered via `app.include_router` in `_register_routes` (gui/app.py:131-149). There is **no** `report_generator.gui.auth` module — `report_generator` has no GUI submodule at all. Operator auth is **network-level only** (loopback binding enforced at `gui/cli.py:107-118`). The framing linter is **globally wired** via `LinterMiddleware` (gui/app.py:45-101) — every text/html response auto-passes through it. Templates use **Jinja2** via `fastapi.templating.Jinja2Templates`, with `_base.html` as the inheritance root. Tests use `fastapi.testclient.TestClient` with function-scoped fixtures.
+
 **Deliverables:**
-- `razor_rooster/calibration_backtest/gui/__init__.py` with empty module and entry-point registration.
-- `gui/routes.py` Flask blueprint `calibration_backtest_bp` registering `/calibration-backtest` and `/calibration-backtest/<run_id>`.
-- `gui/auth.py` importing operator-auth decorators from `report_generator.gui.auth` (no changes to `report_generator`; reuse existing).
-- `gui/templates/` directory with base template inheriting from `report_generator`'s frame template.
-- `tests/gui/test_routes.py` scaffold with fixtures for seeded `backtest_runs` and `backtest_predictions`.
-- Import sanity: `position_engine.frame.linter`, `report_generator.engines.section_assemblers.reliability`, and operator-auth all accessible without circular dependency.
-**Verification:** module imports cleanly; blueprint registers; tests collect without error.
-**Out of scope:** route handlers (T-CB-036, T-CB-037).
+- Add new module `src/razor_rooster/gui/routes/calibration_backtest.py` exporting `router = APIRouter()` with two GET handlers:
+  - `@router.get("/calibration-backtest", response_class=HTMLResponse)` — list view (T-CB-036)
+  - `@router.get("/calibration-backtest/{run_id}", response_class=HTMLResponse)` — detail view (T-CB-037)
+- Each handler signature: `async def name(request: Request) -> Response`, opens DuckDB via `with open_store(request.app.state.db_path) as conn:`, returns `render_template(request, "calibration_backtest/<page>.html", context)` (the typed wrapper from `gui/_render.py`, NOT raw `TemplateResponse` — needed for mypy --strict).
+- Register router via **local import** inside `gui/app.py::_register_routes` (mirroring lines 131-142 — local imports preserve the no-circular-import guarantee). Add two lines: `from razor_rooster.gui.routes.calibration_backtest import router as cb_router` and `app.include_router(cb_router)`.
+- Add a nav link to `gui/templates/_base.html` (lines 12-19, alongside Dashboard/Reports/Digest/Compare/Watch/Calibration) pointing to `/calibration-backtest`.
+- Create `gui/templates/calibration_backtest/` with `list.html` and `detail.html` extending `_base.html`. Set `{% block title %}` and `{% block content %}`.
+- **Drop the `report_generator.gui.auth` import entirely** — the module does not exist. Drop the auth decorator. Security inherits from loopback-only binding (gui/cli.py:107-118) and `LinterMiddleware`.
+- **Drop the framing-linter wrapping per route** — `LinterMiddleware` (gui/app.py:45-101) already wraps every text/html response with `check_text`. Re-adding it would double-run.
+- **Read-only invariant:** only GET routes; never POST/PUT/DELETE/PATCH (test_no_state_mutation_routes_registered enforces this).
+- **No external assets:** no `http(s)://` URLs in templates, no external `<script>`/`<link>` tags, inline SVG only (test_no_external_assets_in_any_page enforces this).
+**Verification:** module imports cleanly; `app.include_router(cb_router)` registers under `_register_routes`; `TestClient(create_app(db_path=...)).get("/calibration-backtest")` returns 200 (smoke); template files extend `_base.html`.
+**Out of scope:** route handlers' bodies (T-CB-036, T-CB-037).
 
 ### T-CB-036 — Implement list view (`/calibration-backtest` route)
 **Depends on:** T-CB-035.
 **References:** REQ-CB-CLI-004, REQ-CB-CLI-002, design §3.14, §3.12.
+
+> **Scout amendment (2026-05-31):** drop the per-route linter call — `LinterMiddleware` already covers it globally. Use existing `list_runs` from Phase 4.
+
 **Deliverables:**
-- `GET /calibration-backtest` handler in `routes.py` querying `backtest_runs` ordered by `started_at DESC`, default `LIMIT 50`.
-- Columns: run_id (12-char prefix linked to detail), started_at, library_version, system_revision (16-char prefix), lag_days, predictions_total, predictions_scored, overall_brier, fallback_polarity_rate (computed; `NULL` when zero scored).
-- Status badge (in_progress | complete | failed) with conditional styling.
-- Jinja2 template `calibration_backtest/list.html` with table rows; disclaimer block from `calibration_backtest.frame.DISCLAIMER` at page top.
-- `position_engine.frame.linter.check_text` applied to all non-data strings (headings, labels, instructions) before rendering.
-- Pagination handler for `--limit N` query param; default 50, max 200.
-**Verification:** route returns 200; table rows present; linter passes on all chrome strings.
+- `GET /calibration-backtest` handler calling `persistence.operations.list_runs(conn, limit=..., offset=...)` (already paginated; sorted `started_at DESC`).
+- Query params: `?limit=N` (default 50, max 200) and `?offset=M` for pagination.
+- Columns rendered in `list.html`: run_id (12-char prefix linked to `/calibration-backtest/{run_id}`), started_at, library_version, system_revision (16-char prefix), lag_days, predictions_total, predictions_scored, overall_brier (4-decimal), fallback_polarity_rate (% formatted; show "—" when no scored predictions).
+- Status badge (`in_progress` | `complete` | `failed`) styled via inline CSS (no external stylesheet — must satisfy test_no_external_assets_in_any_page).
+- `list.html` extends `_base.html`; `{% block content %}` includes:
+  - Page heading
+  - Disclaimer block (`{{ disclaimer }}` — passed in via context, sourced from `calibration_backtest.frame.DISCLAIMER`)
+  - Table with the columns above
+  - Pagination prev/next links honoring `?limit` + `?offset`
+- All chrome strings (headings, labels, badge text) are static or come from `frame.DISCLAIMER` / `frame.FOOTER_NOTE`. `LinterMiddleware` will catch any imperative phrasing on response.
+**Verification:** route returns 200; table rows match seeded `backtest_runs` ordered `started_at DESC`; pagination respects `?limit` and `?offset`; status badge styling correct; `test_no_external_assets_in_any_page` and `test_no_state_mutation_routes_registered` pass for the new route; LinterMiddleware never rejects.
 **Out of scope:** detail view (T-CB-037).
 
 ### T-CB-037 — Implement detail view (`/calibration-backtest/{run_id}` route)
 **Depends on:** T-CB-035, T-CB-036.
 **References:** REQ-CB-CLI-004, REQ-CB-CLI-002, design §3.14, §3.6, §3.12, OQ-CB-002.
+
+> **Scout amendment (2026-05-31):** **`report_generator.engines.section_assemblers.reliability(..., bin_count=...)` does not produce SVG and never has** — `report_generator` only emits an 11×21 ASCII chart wrapped in `<pre>`. Reuse `calibration_backtest.renderers.reliability_svg.render_reliability_svg(diagram, sector_label=...)` from Phase 5. Lift the diagram-hydration helpers (`_reliability_diagrams_from_run`, `_hydrate_diagram`) out of `report_generator/renderer/html.py` (lines 302-361) into a shared module so the HTML renderer and GUI consume the same hydration path.
+
+**Prerequisite refactor (lift-and-share):**
+- Create `src/razor_rooster/calibration_backtest/renderers/_diagram_hydrate.py` exporting:
+  - `reliability_diagrams_from_run(run: BacktestRun) -> dict[str, ReliabilityDiagram]` (rehydrates per-sector diagrams from `run.summary_json["reliability_diagrams"]`)
+  - `hydrate_diagram(payload: Mapping[str, Any]) -> ReliabilityDiagram`
+- Move the corresponding logic out of `report_generator/renderer/html.py` (lines 302-361) and import from this shared module so `html.py` and the new GUI view share one path. Schema changes to `ReliabilityBin` then propagate atomically.
+- Add a contract test that round-trips a `BacktestRun.summary_json` through the shared hydrator and asserts both `html.py` and the GUI consume identical `ReliabilityDiagram` instances.
+
 **Deliverables:**
-- `GET /calibration-backtest/{run_id}` handler fetching `backtest_runs` by `run_id` (404 if missing).
-- Deserializes `summary_json` for per-sector Brier, per-class Brier, fallback rate, resolved bin counts (`bin_count_global`, `bin_count_per_sector_json`).
-- Queries `backtest_predictions` paginated by status (scored | skipped) with optional `skip_reason` filter.
-- Header section: run parameters, library_version, system_revision, run status, prediction counts (total, scored, skipped by reason).
-- Per-sector and per-class Brier tables.
-- Reliability diagrams generated by invoking `report_generator.engines.section_assemblers.reliability(..., bin_count=...)`; embedded as inline SVG.
-- Fallback-polarity-rate banner: when rate >5%, render highlight note (linter-checked; conditional language).
-**Verification:** detail route renders for seeded run; banner appears at >5% rate; reliability SVGs match daily-report binning.
+- `GET /calibration-backtest/{run_id}` handler:
+  1. `run = persistence.operations.fetch_run(conn, run_id)`. If `None`, raise `HTTPException(404)` with a clear message.
+  2. Extract per-sector and per-class Brier from `run.summary_json`. Resolve `bin_count_global` and `bin_count_per_sector` from the run row.
+  3. Hydrate per-sector diagrams via `reliability_diagrams_from_run(run)`.
+  4. Pre-render SVGs in the route handler: `reliability_svgs = {sector: render_reliability_svg(diagram, sector_label=sector) for sector, diagram in diagrams.items()}`. Catch `BacktestConfigError` to surface degenerate/invalid diagrams as a 500 with a meaningful message.
+  5. Pass `reliability_svgs` (str-valued dict), per-sector/per-class Brier dicts, run metadata, and disclaimer into context.
+- `detail.html` template:
+  - Header section: run parameters, library_version, system_revision (full), status, prediction counts (total / scored / skipped grouped by skip_reason).
+  - Per-sector Brier table.
+  - Per-class Brier table.
+  - Per-sector reliability diagrams: `{% for sector, svg in reliability_svgs.items() %}<section class="diagram"><h3>Sector: {{ sector }}</h3><div class="diagram-wrapper">{{ svg | safe }}</div></section>{% endfor %}`. The `| safe` filter is correct because `render_reliability_svg` returns a complete `<svg>...</svg>` element with HTML-escaped operator strings (sector labels go through `html.escape` inside the helper).
+  - Fallback-polarity-rate banner: when rate >5%, render highlight note in a `<section class="warning">` block. Use static, conditional-voice language ("Operators may want to investigate..." not "Investigate this..."). LinterMiddleware enforces.
+  - Disclaimer block at top.
+- **DO NOT pass user-controlled width/height/padding to `render_reliability_svg`.** Use defaults (320, 320, 32).
+**Verification:**
+- 200 for seeded run; 404 for unknown run_id.
+- Banner appears at >5% fallback rate.
+- Reliability SVGs are valid `<svg>...</svg>` markup with `viewBox`; `len(diagram.bins) == bin_count`.
+- Bin-tuple inputs match `report_generator._equal_width_bins(bin_count)` (parity inherited from T-CB-022 / Phase 5).
+- Contract test: `reliability_diagrams_from_run(run)` produces identical `ReliabilityDiagram` instances when called from `html.py` and from the GUI view.
 **Out of scope:** predictions table (T-CB-038).
 
 ### T-CB-038 — Implement predictions table with pagination and filtering
 **Depends on:** T-CB-035, T-CB-037.
 **References:** REQ-CB-CLI-004, REQ-CB-CLI-002, design §3.7, §3.14.
-**Deliverables:**
-- Detail-view predictions section rendering `backtest_predictions` rows in a paged table.
-- Columns: prediction_id (truncated), class_id, condition_id, venue, sector, prediction_ts, resolution_ts, model_p, observed, polarity, polarity_source, status, skip_reason (when skipped).
-- Filter tabs/dropdown: 'All', 'Scored', 'Skipped', `Skip reason: {reason}` per unique reason.
-- Pagination: 20 rows per page; prev/next links.
-- Optional `trace_diff_summary` column lazy-loaded via separate AJAX endpoint (deferred to v2 if time-boxed).
-- Linter applied to column headers and explanatory text; data cells bypass linter.
-**Verification:** filter tabs return correct subsets; pagination respects page size; linter passes on chrome.
-**Out of scope:** trace decompression (deferred).
 
-### T-CB-039 — Integrate framing linter and disclaimer rendering
+> **Scout amendment (2026-05-31):** `persistence.operations` only has `fetch_predictions(conn, run_id) -> tuple[BacktestPrediction, ...]` — no filters, no pagination, no count. Add `list_predictions` and `count_predictions` to `operations.py` BEFORE the route handler. Drop the AJAX-loaded trace_diff_summary column entirely for v1 (deferred). LinterMiddleware covers chrome strings globally.
+
+**Prerequisite (persistence helpers):**
+- Add `list_predictions(conn, run_id, *, status: PredictionStatus | None = None, skip_reason: SkipReason | None = None, limit: int = 20, offset: int = 0) -> tuple[BacktestPrediction, ...]` to `calibration_backtest/persistence/operations.py`. Mirror `list_runs`'s pattern: validate `limit >= 0`, `offset >= 0` (raise `BacktestPersistenceError`), build SQL with optional WHERE clauses appended for `status` and `skip_reason`, **`ORDER BY prediction_id ASC`** (matching `fetch_predictions` so pagination is correct across pages), `LIMIT ? OFFSET ?`. Reuse `_PREDICTION_SELECT_COLUMNS` and `_row_to_prediction`. Wrap `duckdb.Error` via `_wrap_db_error("list_predictions failed", exc)`.
+- Add `count_predictions(conn, run_id, *, status=None, skip_reason=None) -> int` for "Page N of M" rendering.
+- **Filter binding:** pass enum values via `str(status)` and `str(skip_reason)` (matching how `_prediction_params` stores them) — passing the enum object directly produces zero rows silently.
+- Append both names to `__all__`.
+- Tests: `tests/calibration_backtest/test_list_predictions.py` covering filter combinations, limit/offset boundaries, ordering stability, validation errors.
+
+**Deliverables (route + template):**
+- Detail-view predictions section in `detail.html` rendering `list_predictions(...)` results in a paged table.
+- Columns: prediction_id (truncated 12-char), class_id, condition_id, venue, sector, prediction_ts, resolution_ts, model_p (4-decimal), observed, polarity, polarity_source, status, skip_reason (only when status=skipped, else "—").
+- Filter tabs/dropdown: 'All', 'Scored', 'Skipped', then `Skip reason: {reason}` per unique reason discovered via `count_predictions(..., status=skipped, skip_reason=...)` calls.
+- Query params: `?status=&skip_reason=&page=N&limit=20` (default limit 20, max 200). `page` is 1-indexed; convert to `offset = (page - 1) * limit` before calling `list_predictions`.
+- Pagination footer with "Page N of M" + prev/next links honoring active filters.
+- **DEFER**: AJAX `trace_diff_summary` column. Add a `# DEFER-CB-006` comment in the route module and document in design §7.
+- Data cells render numeric/timestamp values verbatim; LinterMiddleware will catch any imperative phrasing in chrome.
+**Verification:**
+- Filter tabs return correct subsets (assert via `count_predictions` cross-check).
+- Pagination boundary test: seed `>= 2 * limit` rows; assert page 1 + page 2 union equals full set with no duplicates or gaps.
+- `list_predictions` ordering stable (matches `fetch_predictions` ASC ordering).
+- LinterMiddleware never rejects.
+**Out of scope:** trace decompression and `trace_diff_summary` (deferred to v2).
+
+### T-CB-039 — Verify framing linter coverage and disclaimer rendering
 **Depends on:** T-CB-035.
 **References:** REQ-CB-CLI-002, REQ-CB-CLI-004, design §3.9, §3.12.
+
+> **Scout amendment (2026-05-31):** the framing linter is **already wired globally** — `LinterMiddleware` in `gui/app.py:45-101` wraps every text/html response and runs `check_text` on the decoded body. Re-adding per-route linter calls would double-run. Rewrite the task to **verify** existing global coverage rather than wire new calls.
+
 **Deliverables:**
-- `gui/frame.py` exports `DISCLAIMER` constant (re-exported from `calibration_backtest.frame.DISCLAIMER` to avoid duplication).
-- `render_disclaimer()` helper returning HTML fragment for page top.
-- `render_footer_note()` helper returning footer fragment (HTML/template routes only; not JSON).
-- All template strings (headings, labels, instructions, badge text) wrapped with `linter.check_text()` before rendering.
-- Error handler: missing `forbidden_phrases.yaml` raises `FramingLinterError` (do NOT skip the check); operator log entry recorded.
-- `gui/tests/test_framing.py` confirms linter is invoked on all list and detail view strings.
-**Verification:** unit test asserts linter invoked on all chrome; missing config raises; disclaimer renders at page top on both routes.
+- Pass `disclaimer = DISCLAIMER` and `footer_note = FOOTER_NOTE` (sourced from `calibration_backtest.frame`) into the Jinja context for both list and detail views. Templates emit them as static blocks.
+- Confirm via integration test that `LinterMiddleware` rejects an injected forbidden phrase: temporarily monkey-patch the route to embed a known imperative phrase from `config/forbidden_phrases.yaml`; assert the response is 500 (or whatever `LinterMiddleware` raises) with `ImperativeLanguageDetected` in the error chain.
+- `tests/gui/test_calibration_backtest_framing.py`:
+  - `test_disclaimer_in_list_response`: GET `/calibration-backtest`; assert DISCLAIMER substring in response.text.
+  - `test_disclaimer_in_detail_response`: GET `/calibration-backtest/{run_id}`; assert DISCLAIMER substring.
+  - `test_footer_note_in_both_responses`: assert FOOTER_NOTE substring at end of both responses.
+  - `test_lintermiddleware_catches_forbidden_phrase`: inject a known forbidden phrase via a test-only route; assert middleware rejects.
+  - `test_no_per_route_linter_call_in_calibration_backtest_module`: AST-grep `gui/routes/calibration_backtest.py` and assert no `check_text` import or call (relies on middleware).
+- **DO NOT** add a `gui/frame.py` re-export module; consumers should import from `calibration_backtest.frame` directly.
+- **DO NOT** wrap individual template strings with `check_text` calls — `LinterMiddleware` covers them.
+**Verification:** all four tests pass; AST check confirms no double-run; disclaimer renders at page top on both routes.
 **Out of scope:** route logic (T-CB-036..T-CB-038).
 
 ### T-CB-040 — Add comprehensive GUI route tests with seeded data
 **Depends on:** T-CB-035, T-CB-036, T-CB-037, T-CB-038, T-CB-039.
 **References:** REQ-CB-CLI-004, design §3.14, §4.2.
+
+> **Scout amendment (2026-05-31):** mirror `tests/gui/conftest.py` + `tests/gui/test_routes.py` patterns verbatim — `fastapi.testclient.TestClient` wrapping `create_app(db_path=...)`, function-scoped fixtures. Drop the auth test (no auth layer exists; security is loopback-only). Seed `>= 2 * limit` predictions per run so pagination boundaries are exercised.
+
 **Deliverables:**
-- `tests/gui/test_routes.py` integration fixtures seeding `backtest_runs`, `backtest_predictions`, `backtest_traces` into a test DuckDB instance.
-- List-route test: 200; table rows; run_id link format; linter passes.
-- Detail-route test: 200; metadata; per-sector Brier; reliability SVGs; predictions paginated.
-- Missing-run test: 404 on unknown run_id.
-- Fallback-polarity-banner test: seeded run with >5% fallback rate; banner present and linter-passed.
-- Pagination test: 50+ predictions; page 1 = 20 rows; page 2 = remainder.
-- Filter test: `?status=skipped` and `?skip_reason=insufficient_lag` return only matching rows.
-- Auth test: route without operator session yields 401 or redirect (mirroring `report_generator` patterns).
-**Verification:** all GUI tests green.
+- `tests/gui/conftest.py` extension: add a `populated_backtest_db` function-scoped fixture that:
+  - Creates a fresh DuckDB at `tmp_path / "test.duckdb"`.
+  - Runs all upstream migrations (data_ingest, polymarket, pattern_library, signal_scanner, mispricing, position_engine, calibration_backtest) in dependency order.
+  - Inserts ~3 `BacktestRun` rows (mixed `BacktestStatus`: complete, in_progress, failed) via `persist_score_summary` / `insert_run`.
+  - Inserts `>= 2 * 20 = 40` `BacktestPrediction` rows per run, mixing `status=scored` and `status=skipped` with both common `skip_reason` values (e.g., `mapping_mismatch`, `outside_window`).
+  - Inserts 1-2 `BacktestTrace` rows via `insert_trace` for the detail-view trace section.
+- `tests/gui/test_calibration_backtest_routes.py`:
+  - `test_list_route_200`: GET `/calibration-backtest` returns 200; HTML contains all 3 seeded run_ids; ordered `started_at DESC`.
+  - `test_list_run_id_link_format`: each row's run_id is a link to `/calibration-backtest/<full_run_id>` (NOT the truncated 12-char prefix in the href).
+  - `test_list_pagination`: GET `/calibration-backtest?limit=2`; assert exactly 2 rows; GET `?limit=2&offset=2`; assert remaining row(s).
+  - `test_detail_route_200`: GET `/calibration-backtest/<run_id>` returns 200; HTML contains run metadata, per-sector Brier table, per-class Brier table, ≥1 inline `<svg>` element.
+  - `test_detail_missing_run_404`: GET `/calibration-backtest/nonexistent_run_id` returns 404.
+  - `test_detail_fallback_banner`: seed a run with >5% `fallback_polarity_rate`; assert `<section class="warning">` block present.
+  - `test_predictions_pagination`: GET `/calibration-backtest/<run_id>?page=1&limit=20`; assert 20 rows; `?page=2&limit=20`; assert remaining 20 rows; assert no overlap between page sets.
+  - `test_predictions_filter_status`: GET `?status=skipped`; assert only skipped rows.
+  - `test_predictions_filter_skip_reason`: GET `?skip_reason=mapping_mismatch`; assert only matching rows.
+  - `test_no_external_assets`: re-run `tests/gui/test_routes.py::test_no_external_assets_in_any_page` against the new routes (asserts no `http(s)://` URLs, no external `<script>`/`<link>` tags).
+  - `test_no_state_mutation`: assert all calibration_backtest routes are GET-only.
+- **DROP the auth test** — no auth layer exists; security is loopback-only and inherited from `gui/cli.py`.
+**Verification:** all GUI tests green; pagination boundary test confirms page 1 + page 2 union = full set with no duplicates; filter tests confirm correct subsets; LinterMiddleware never rejects.
 **Out of scope:** CLI tests (Phase 5).
 
 ### T-CB-041 — GUI verification gates (mypy, ruff, pytest, no-circular)
 **Depends on:** T-CB-035, T-CB-036, T-CB-037, T-CB-038, T-CB-039, T-CB-040.
 **References:** REQ-CB-CLI-004, REQ-CB-CLI-002, design §3.14, §3.15.
+
+> **Scout amendment (2026-05-31):** the new module lives at `src/razor_rooster/gui/routes/calibration_backtest.py` (FastAPI router), NOT `razor_rooster/calibration_backtest/gui/`. Adjust gate paths. Add explicit no-top-level-import check (router must be imported locally inside `_register_routes` to preserve no-circular guarantee). Match CI's hard-gate verbatim.
+
 **Deliverables:**
-- `mypy --strict razor_rooster/calibration_backtest/gui/` clean.
-- `ruff check razor_rooster/calibration_backtest/gui/ --select E,W,F,I` clean.
-- `ruff format razor_rooster/calibration_backtest/gui/` applied.
-- `pytest razor_rooster/calibration_backtest/tests/gui/ -v --tb=short` green, including framing and auth tests.
-- Static check: `grep -r "from calibration_backtest" razor_rooster/report_generator razor_rooster/gui` returns zero matches (no circular dependency).
-- Document deferred GUI enhancements (DEFER-CB-005 items: JS interactivity, trace diffs) in CALIBRATION_BACKTEST_DESIGN.md §7.
-**Verification:** all gates green.
+- **CI hard-gate match:** `mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest tests/gui` clean (matches CI's hard-gate target verbatim — runs strict against src + the new tests dir).
+- `mypy --strict src/razor_rooster/gui/routes/calibration_backtest.py` clean (focused subset).
+- `ruff check src tests` clean.
+- `ruff format --check src tests` clean.
+- `pytest tests/gui` green (including the new `test_calibration_backtest_routes.py` and `test_calibration_backtest_framing.py`).
+- Full pytest suite green (no regressions in upstream subsystems from the GUI route addition).
+- **Static no-circular-import check:** `grep -E "^from razor_rooster.calibration_backtest|^import razor_rooster.calibration_backtest" src/razor_rooster/gui/app.py` returns ZERO matches at module top-level. The import must be inside `_register_routes` (local import).
+- **Static no-cross-pollution check:** `grep -rn "from razor_rooster.calibration_backtest\|from razor_rooster.gui" src/razor_rooster/report_generator/` returns ZERO matches (`report_generator` does not import either downstream subsystem).
+- **DEFER-CB-005 + DEFER-CB-006 documented** in `CALIBRATION_BACKTEST_DESIGN.md` §7: JS interactivity (collapsible bin tooltips, sortable tables); trace_diff_summary AJAX endpoint; dark-mode CSS for inline SVG.
+**Verification:** all gates green; no top-level circular import; no `report_generator` -> `calibration_backtest`/`gui` imports.
 **Out of scope:** non-GUI surfaces.
 
 ## Phase 7 — Pattern-Library upgrade
