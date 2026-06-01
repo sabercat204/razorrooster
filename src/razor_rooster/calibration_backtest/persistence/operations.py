@@ -402,16 +402,21 @@ def list_runs(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> tuple[BacktestRun, ...]:
     """Return ``backtest_runs`` rows ordered by ``started_at DESC``.
 
     *since* and *until* filter on ``started_at`` (inclusive lower, exclusive
     upper bound) so callers can scope to a recent window. *limit* caps the
-    result size; a value of ``0`` yields no rows. Negative limits raise
-    :class:`BacktestPersistenceError`.
+    result size; a value of ``0`` yields no rows. *offset* skips that many
+    rows from the start of the ordered result so callers can paginate
+    (`limit=N`, `offset=k*N` returns page ``k``). Negative *limit* or
+    *offset* values raise :class:`BacktestPersistenceError`.
     """
     if limit < 0:
         raise BacktestPersistenceError(f"list_runs: limit must be >= 0, got {limit!r}")
+    if offset < 0:
+        raise BacktestPersistenceError(f"list_runs: offset must be >= 0, got {offset!r}")
     sql = f"SELECT {_RUN_SELECT_COLUMNS} FROM {TABLE_RUNS}"
     where: list[str] = []
     params: list[Any] = []
@@ -423,8 +428,9 @@ def list_runs(
         params.append(until)
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY started_at DESC LIMIT ?"
+    sql += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
     params.append(int(limit))
+    params.append(int(offset))
     try:
         rows = conn.execute(sql, params).fetchall()
     except duckdb.Error as exc:
@@ -528,6 +534,92 @@ def fetch_predictions(
     except duckdb.Error as exc:
         raise _wrap_db_error(f"fetch_predictions({run_id!r}) failed", exc) from exc
     return tuple(_row_to_prediction(row) for row in rows)
+
+
+def _build_prediction_filter_clauses(
+    run_id: str,
+    status: PredictionStatus | None,
+    skip_reason: SkipReason | None,
+) -> tuple[str, list[Any]]:
+    """Compose the shared ``WHERE`` clause used by list/count predictions.
+
+    Returns ``(where_sql, params)`` where ``where_sql`` either is empty or
+    starts with ``" WHERE "``. Enum filters are stringified via ``str(...)``
+    to mirror :func:`_prediction_params`, which persists ``status`` and
+    ``skip_reason`` as their canonical string values.
+    """
+    where: list[str] = ["run_id = ?"]
+    params: list[Any] = [run_id]
+    if status is not None:
+        where.append("status = ?")
+        params.append(str(status))
+    if skip_reason is not None:
+        where.append("skip_reason = ?")
+        params.append(str(skip_reason))
+    return " WHERE " + " AND ".join(where), params
+
+
+def list_predictions(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    *,
+    status: PredictionStatus | None = None,
+    skip_reason: SkipReason | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[BacktestPrediction, ...]:
+    """Return a paginated, optionally filtered slice of predictions for *run_id*.
+
+    The result is ordered by ``prediction_id ASC`` so pagination is
+    deterministic across calls (matching :func:`fetch_predictions`).
+    *status* and *skip_reason* narrow the result via additional ``WHERE``
+    clauses; passing ``None`` (the default) leaves the corresponding
+    column unfiltered. *limit* caps the page size and *offset* skips that
+    many rows from the start of the ordered result. A ``limit`` of ``0``
+    yields an empty tuple. Negative *limit* or *offset* values raise
+    :class:`BacktestPersistenceError`.
+    """
+    if limit < 0:
+        raise BacktestPersistenceError(f"list_predictions: limit must be >= 0, got {limit!r}")
+    if offset < 0:
+        raise BacktestPersistenceError(f"list_predictions: offset must be >= 0, got {offset!r}")
+    where_sql, params = _build_prediction_filter_clauses(run_id, status, skip_reason)
+    sql = (
+        f"SELECT {_PREDICTION_SELECT_COLUMNS} FROM {TABLE_PREDICTIONS}"
+        f"{where_sql} ORDER BY prediction_id ASC LIMIT ? OFFSET ?"
+    )
+    params.append(int(limit))
+    params.append(int(offset))
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except duckdb.Error as exc:
+        raise _wrap_db_error(f"list_predictions({run_id!r}) failed", exc) from exc
+    return tuple(_row_to_prediction(row) for row in rows)
+
+
+def count_predictions(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    *,
+    status: PredictionStatus | None = None,
+    skip_reason: SkipReason | None = None,
+) -> int:
+    """Return the number of predictions for *run_id* matching the filters.
+
+    Mirrors the filtering surface of :func:`list_predictions` so callers
+    can render "Page N of M" alongside a paged table without rebuilding
+    the query themselves. Returns ``0`` when no predictions match (or the
+    run is absent).
+    """
+    where_sql, params = _build_prediction_filter_clauses(run_id, status, skip_reason)
+    sql = f"SELECT COUNT(*) FROM {TABLE_PREDICTIONS}{where_sql}"
+    try:
+        row = conn.execute(sql, params).fetchone()
+    except duckdb.Error as exc:
+        raise _wrap_db_error(f"count_predictions({run_id!r}) failed", exc) from exc
+    if row is None:
+        return 0
+    return int(row[0])
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +832,7 @@ def _row_to_prediction(row: tuple[Any, ...]) -> BacktestPrediction:
 
 __all__ = [
     "complete_run",
+    "count_predictions",
     "fetch_predictions",
     "fetch_run",
     "fetch_run_status",
@@ -748,6 +841,7 @@ __all__ = [
     "insert_predictions_batch",
     "insert_run",
     "insert_trace",
+    "list_predictions",
     "list_runs",
     "persist_score_summary",
     "prune_run",

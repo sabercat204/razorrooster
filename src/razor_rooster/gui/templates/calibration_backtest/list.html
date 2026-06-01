@@ -1,0 +1,81 @@
+{% extends "_base.html" %}
+{% block title %}Calibration backtest runs &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Calibration backtest runs</h2>
+
+<section class="disclaimer">
+    <p>{{ disclaimer }}</p>
+</section>
+
+{% if rows %}
+<table>
+<thead>
+<tr>
+    <th>Run ID</th>
+    <th>Started at</th>
+    <th class="num">Library</th>
+    <th>System revision</th>
+    <th class="num">Lag (d)</th>
+    <th class="num">Total</th>
+    <th class="num">Scored</th>
+    <th class="num">Overall Brier</th>
+    <th class="num">Fallback polarity rate</th>
+    <th>Status</th>
+</tr>
+</thead>
+<tbody>
+{% for row in rows %}
+<tr>
+    <td><a href="/calibration-backtest/{{ row.run_id }}"><code>{{ row.run_id_short }}</code></a></td>
+    <td>{{ row.started_at.isoformat() }}</td>
+    <td class="num">{{ row.library_version }}</td>
+    <td><code>{{ row.system_revision_short }}</code></td>
+    <td class="num">{{ row.lag_days }}</td>
+    <td class="num">{{ row.predictions_total }}</td>
+    <td class="num">{{ row.predictions_scored }}</td>
+    <td class="num">
+        {% if row.overall_brier is not none %}{{ "%.4f"|format(row.overall_brier) }}{% else %}&mdash;{% endif %}
+    </td>
+    <td class="num">
+        {% if row.fallback_polarity_rate is not none %}{{ "%.1f%%"|format(row.fallback_polarity_rate * 100) }}{% else %}&mdash;{% endif %}
+    </td>
+    <td>
+        {% if row.status == 'complete' %}
+            <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#e0f0e0;color:#1a5a1a;font-size:0.85em;">{{ row.status }}</span>
+        {% elif row.status == 'in_progress' %}
+            <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#fff5cc;color:#665500;font-size:0.85em;">{{ row.status }}</span>
+        {% elif row.status == 'failed' %}
+            <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#ffd6d6;color:#7a1a1a;font-size:0.85em;">{{ row.status }}</span>
+        {% else %}
+            <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#e6e6e6;color:#333;font-size:0.85em;">{{ row.status }}</span>
+        {% endif %}
+    </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<div class="empty">
+    No calibration-backtest runs match the current page. Operators may want
+    to back up to an earlier offset or run a fresh backtest via the CLI.
+</div>
+{% endif %}
+
+<nav class="pagination" style="margin-top:1em;">
+    {% if has_prev %}
+        <a href="/calibration-backtest?limit={{ limit }}&amp;offset={{ prev_offset }}">&laquo; previous</a>
+    {% else %}
+        <span class="muted">&laquo; previous</span>
+    {% endif %}
+    <span class="muted" style="margin:0 0.5em;">offset {{ offset }} &middot; limit {{ limit }}</span>
+    {% if has_next %}
+        <a href="/calibration-backtest?limit={{ limit }}&amp;offset={{ next_offset }}">next &raquo;</a>
+    {% else %}
+        <span class="muted">next &raquo;</span>
+    {% endif %}
+</nav>
+
+<section class="footer-note" style="margin-top:1.5em;">
+    <p class="muted">{{ footer_note }}</p>
+</section>
+{% endblock %}

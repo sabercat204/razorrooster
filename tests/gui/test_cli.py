@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from razor_rooster.cli import main as razor_main
@@ -52,22 +53,22 @@ def test_resolve_db_path_explicit_wins() -> None:
     assert str(out) == "/tmp/explicit.duckdb"
 
 
-def test_resolve_db_path_env_fallback(monkeypatch) -> None:
+def test_resolve_db_path_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RAZOR_ROOSTER_DB", "/tmp/from-env.duckdb")
     out = _resolve_db_path(None)
     assert str(out) == "/tmp/from-env.duckdb"
 
 
-def test_resolve_port_default(monkeypatch) -> None:
+def test_resolve_port_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RAZORROO_GUI_PORT", raising=False)
     assert _resolve_port(None) == 8765
 
 
-def test_resolve_port_env(monkeypatch) -> None:
+def test_resolve_port_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RAZORROO_GUI_PORT", "9876")
     assert _resolve_port(None) == 9876
 
 
-def test_resolve_port_explicit_wins(monkeypatch) -> None:
+def test_resolve_port_explicit_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RAZORROO_GUI_PORT", "9876")
     assert _resolve_port(8500) == 8500

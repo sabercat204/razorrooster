@@ -1,0 +1,221 @@
+{% extends "_base.html" %}
+{% block title %}Backtest run {{ run.run_id }} &mdash; Razor-Rooster{% endblock %}
+{% block content %}
+<h2>Calibration backtest run</h2>
+
+<section class="disclaimer">
+    <p>{{ disclaimer }}</p>
+</section>
+
+<section class="run-header">
+    <h3>Run parameters</h3>
+    <dl>
+        <dt>Run ID</dt><dd><code>{{ run.run_id }}</code></dd>
+        <dt>Status</dt>
+        <dd>
+            {% if run.status|string == 'complete' %}
+                <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#e0f0e0;color:#1a5a1a;font-size:0.85em;">{{ run.status }}</span>
+            {% elif run.status|string == 'in_progress' %}
+                <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#fff5cc;color:#665500;font-size:0.85em;">{{ run.status }}</span>
+            {% elif run.status|string == 'failed' %}
+                <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#ffd6d6;color:#7a1a1a;font-size:0.85em;">{{ run.status }}</span>
+            {% else %}
+                <span style="display:inline-block;padding:2px 6px;border-radius:3px;background:#e6e6e6;color:#333;font-size:0.85em;">{{ run.status }}</span>
+            {% endif %}
+        </dd>
+        <dt>Since</dt><dd>{{ run.since_ts.isoformat() }}</dd>
+        <dt>Until</dt><dd>{{ run.until_ts.isoformat() }}</dd>
+        <dt>Lag (days)</dt><dd>{{ run.lag_days }}</dd>
+        <dt>Library version</dt><dd>{{ run.library_version }}</dd>
+        <dt>System revision</dt><dd><code>{{ run.system_revision }}</code></dd>
+        <dt>Started at</dt><dd>{{ run.started_at.isoformat() }}</dd>
+        <dt>Completed at</dt>
+        <dd>
+            {% if run.completed_at is not none %}{{ run.completed_at.isoformat() }}{% else %}&mdash;{% endif %}
+        </dd>
+        <dt>Allow recent</dt><dd>{{ run.allow_recent }}</dd>
+        <dt>Disclaimer version</dt><dd><code>{{ run.disclaimer_version }}</code></dd>
+    </dl>
+
+    <h3>Prediction counts</h3>
+    <ul>
+        <li>Total: {{ run.predictions_total }}</li>
+        <li>Scored: {{ run.predictions_scored }}</li>
+        <li>Skipped: {{ run.predictions_skipped }}</li>
+    </ul>
+    {% if skip_breakdown %}
+    <h4>Skipped by reason</h4>
+    <ul>
+        {% for reason, count in skip_breakdown.items() %}
+        <li><code>{{ reason }}</code>: {{ count }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h3>Aggregate scoring</h3>
+    <ul>
+        <li>Overall Brier:
+            {% if run.overall_brier is not none %}{{ "%.4f"|format(run.overall_brier) }}{% else %}&mdash;{% endif %}
+        </li>
+        <li>Fallback polarity count: {{ run.fallback_polarity_count }}</li>
+        <li>Fallback polarity rate:
+            {% if fallback_polarity_rate is not none %}{{ "%.1f%%"|format(fallback_polarity_rate * 100) }}{% else %}&mdash;{% endif %}
+        </li>
+    </ul>
+</section>
+
+{% if fallback_polarity_high %}
+<section class="warning" style="border-left:4px solid #aa4400;background:#fff0e0;padding:0.5em 1em;margin:1em 0;">
+    <h4 style="margin-top:0;">Elevated fallback-polarity rate</h4>
+    <p>
+        The fallback-polarity rate for this run sits above the 5%
+        operator-attention threshold. Operators may want to investigate the
+        underlying mapping coverage before acting on the per-cell Brier
+        outcomes &mdash; a high fallback rate could indicate stale class /
+        market mappings or missing comparison_resolutions rows.
+    </p>
+</section>
+{% endif %}
+
+<section class="per-sector-brier">
+    <h3>Per-sector Brier</h3>
+    {% if per_sector_brier %}
+    <table>
+    <thead>
+    <tr><th>Sector</th><th class="num">Brier</th></tr>
+    </thead>
+    <tbody>
+    {% for sector, brier in per_sector_brier %}
+    <tr><td><code>{{ sector }}</code></td><td class="num">{{ "%.4f"|format(brier) }}</td></tr>
+    {% endfor %}
+    </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No per-sector Brier data available for this run.</div>
+    {% endif %}
+</section>
+
+<section class="per-class-brier">
+    <h3>Per-class Brier</h3>
+    {% if per_class_brier %}
+    <table>
+    <thead>
+    <tr><th>Class</th><th class="num">Brier</th></tr>
+    </thead>
+    <tbody>
+    {% for class_id, brier in per_class_brier %}
+    <tr><td><code>{{ class_id }}</code></td><td class="num">{{ "%.4f"|format(brier) }}</td></tr>
+    {% endfor %}
+    </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No per-class Brier data available for this run.</div>
+    {% endif %}
+</section>
+
+<section class="reliability-diagrams">
+    <h3>Per-sector reliability diagrams</h3>
+    {% if reliability_svgs %}
+        {% for sector, svg in reliability_svgs.items() %}
+        <section class="diagram">
+            <h4>Sector: <code>{{ sector }}</code></h4>
+            <div class="diagram-wrapper">{{ svg | safe }}</div>
+        </section>
+        {% endfor %}
+    {% else %}
+        <div class="empty">No reliability diagrams persisted for this run.</div>
+    {% endif %}
+</section>
+
+<section class="predictions">
+    <h3>Predictions</h3>
+    <nav class="predictions-filters" style="margin-bottom:0.75em;">
+        <strong>Filter:</strong>
+        {% if predictions_active_status == 'all' %}
+            <span class="active"><strong>All ({{ predictions_count_all }})</strong></span>
+        {% else %}
+            <a href="/calibration-backtest/{{ run.run_id }}{{ predictions_all_link }}">All ({{ predictions_count_all }})</a>
+        {% endif %}
+        &middot;
+        {% if predictions_active_status == 'scored' and predictions_active_skip_reason is none %}
+            <span class="active"><strong>Scored ({{ predictions_count_scored }})</strong></span>
+        {% else %}
+            <a href="/calibration-backtest/{{ run.run_id }}{{ predictions_scored_link }}">Scored ({{ predictions_count_scored }})</a>
+        {% endif %}
+        &middot;
+        {% if predictions_active_status == 'skipped' and predictions_active_skip_reason is none %}
+            <span class="active"><strong>Skipped ({{ predictions_count_skipped }})</strong></span>
+        {% else %}
+            <a href="/calibration-backtest/{{ run.run_id }}{{ predictions_skipped_link }}">Skipped ({{ predictions_count_skipped }})</a>
+        {% endif %}
+        {% for entry in predictions_skip_reason_links %}
+            &middot;
+            {% if entry.active %}
+                <span class="active"><strong>Skip reason: <code>{{ entry.reason }}</code> ({{ entry.count }})</strong></span>
+            {% else %}
+                <a href="/calibration-backtest/{{ run.run_id }}{{ entry.href }}">Skip reason: <code>{{ entry.reason }}</code> ({{ entry.count }})</a>
+            {% endif %}
+        {% endfor %}
+    </nav>
+    {% if prediction_rows %}
+    <table>
+        <thead>
+        <tr>
+            <th>Prediction</th>
+            <th>Class</th>
+            <th>Condition</th>
+            <th>Venue</th>
+            <th>Sector</th>
+            <th>Prediction at</th>
+            <th>Resolution at</th>
+            <th class="num">Model p</th>
+            <th class="num">Observed</th>
+            <th>Polarity</th>
+            <th>Polarity source</th>
+            <th>Status</th>
+            <th>Skip reason</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for row in prediction_rows %}
+        <tr>
+            <td><code title="{{ row.prediction_id }}">{{ row.prediction_id_short }}</code></td>
+            <td><code>{{ row.class_id }}</code></td>
+            <td><code>{{ row.condition_id }}</code></td>
+            <td>{{ row.venue }}</td>
+            <td>{{ row.sector }}</td>
+            <td>{{ row.prediction_ts }}</td>
+            <td>{{ row.resolution_ts }}</td>
+            <td class="num">{{ row.model_p_display }}</td>
+            <td class="num">{{ row.observed_display }}</td>
+            <td>{{ row.polarity_display }}</td>
+            <td><code>{{ row.polarity_source }}</code></td>
+            <td>{{ row.status }}</td>
+            <td>{% if row.skip_reason_display == '—' %}&mdash;{% else %}<code>{{ row.skip_reason_display }}</code>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No predictions match the active filter.</div>
+    {% endif %}
+
+    <nav class="pagination" style="margin-top:1em;">
+        {% if predictions_prev_link is not none %}
+            <a href="/calibration-backtest/{{ run.run_id }}{{ predictions_prev_link }}">&laquo; previous</a>
+        {% else %}
+            <span class="muted">&laquo; previous</span>
+        {% endif %}
+        <span class="muted" style="margin:0 0.5em;">Page {{ predictions_page }} of {{ predictions_total_pages }} &middot; {{ predictions_total }} prediction(s) &middot; limit {{ predictions_limit }}</span>
+        {% if predictions_next_link is not none %}
+            <a href="/calibration-backtest/{{ run.run_id }}{{ predictions_next_link }}">next &raquo;</a>
+        {% else %}
+            <span class="muted">next &raquo;</span>
+        {% endif %}
+    </nav>
+</section>
+
+<section class="footer-note" style="margin-top:1.5em;">
+    <p class="muted">{{ footer_note }}</p>
+</section>
+{% endblock %}

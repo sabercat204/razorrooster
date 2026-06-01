@@ -550,8 +550,10 @@ Prune is operator-initiated and explicit; the append-only contract on completed 
 - **DEFER-CB-002** — Whether the precursor query audit (OQ-CB-001 follow-up) ships as a static linter or a runtime check. Default: runtime check that flags non-frozen classes during the backtest itself.
 - **DEFER-CB-003** — Historical mapping state (v2 promotion). Triggered if the fallback-polarity rate exceeds five percent on real runs.
 - **DEFER-CB-004** — `--compare-rank-by threshold` mode for ranking by miscalibration-flag transitions. Parked unless operator feedback would request it.
-- **DEFER-CB-005** — Full GUI implementation. The v1 design specifies the surface (Section 3.14); template implementation, JS interactivity, and operator workflow polish ship after CLI parity is proven on real data.
-- **DEFER-CB-006** — Streaming or incremental backtest mode. Compressed-trace storage already permits resume semantics in principle.
+- **DEFER-CB-005** — GUI JavaScript interactivity. Phase 6 (T-CB-035..041) ships the static HTML surface; collapsible reliability-bin tooltips, sortable per-sector / per-class tables, and any client-side filtering chrome are deferred until operators request them. The v1 GUI is link-and-form-only so the no-external-assets invariant stays trivially satisfied (`test_no_external_assets_in_any_page`).
+- **DEFER-CB-006** — `trace_diff_summary` AJAX endpoint. The detail view's predictions table renders the row metadata but does not surface trace decompression — the per-prediction `BacktestTrace` BLOB is persisted but not streamed back to the operator's browser. T-CB-038 carries a `# DEFER-CB-006` marker in `gui/routes/calibration_backtest.py` so the deferred slot is discoverable from the route module.
+- **DEFER-CB-007** — Dark-mode CSS for inline SVG. `renderers/reliability_svg.py` hardcodes light-mode stroke / fill colours so the generated `<svg>` looks consistent regardless of the operator's browser theme. A future revision may either thread the colour palette through `render_reliability_svg(..., palette=...)` or wrap the SVG in `<style>@media (prefers-color-scheme: dark) { ... }</style>` so the diagram tracks the operator's theme.
+- **DEFER-CB-008** — Streaming or incremental backtest mode. Compressed-trace storage already permits resume semantics in principle.
 
 ## 8. References
 
