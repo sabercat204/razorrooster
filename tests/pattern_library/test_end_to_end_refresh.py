@@ -30,6 +30,9 @@ from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
 from razor_rooster.data_ingest.persistence.migrations import (
     run_pending_migrations as run_pending_data_ingest_migrations,
 )
+from razor_rooster.mispricing_detector.persistence.migrations import (
+    run_pending_mispricing_migrations,
+)
 from razor_rooster.pattern_library import library, registry
 from razor_rooster.pattern_library.engines.refresh import run_refresh
 from razor_rooster.pattern_library.persistence.migrations import (
@@ -76,6 +79,7 @@ def populated_store(tmp_path: Path) -> Iterator[DuckDBStore]:
         run_pending_data_ingest_migrations(conn)
         run_pending_polymarket_migrations(conn)
         run_pending_pattern_library_migrations(conn)
+        run_pending_mispricing_migrations(conn)
         register_polymarket_sources(conn)
         _seed_corpus(conn)
     try:
