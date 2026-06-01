@@ -17,6 +17,7 @@ from razor_rooster.calibration_backtest.errors import (
     MappingNotFoundError,
     NoPolarityError,
     RecentWindowError,
+    RunNotFoundError,
 )
 
 _SUBCLASSES: tuple[type[CalibrationBacktestError], ...] = (
@@ -115,8 +116,20 @@ def test_all_listed_exhaustive() -> None:
         "MappingNotFoundError",
         "NoPolarityError",
         "RecentWindowError",
+        "RunNotFoundError",
     }
     assert set(errors_module.__all__) == expected
+
+
+def test_run_not_found_error_stores_run_id() -> None:
+    """``RunNotFoundError`` preserves the offending run_id and renders a
+    deterministic message via the base ``CalibrationBacktestError`` init.
+    """
+    err = RunNotFoundError("abc123")
+    assert err.run_id == "abc123"
+    assert err.message == "Run not found: abc123"
+    assert str(err) == "Run not found: abc123"
+    assert isinstance(err, CalibrationBacktestError)
 
 
 def test_errors_reexported_from_package() -> None:

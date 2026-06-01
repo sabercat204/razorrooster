@@ -586,6 +586,97 @@ def fetch_trace(
 
 
 # ---------------------------------------------------------------------------
+# Maintenance — prune (transactional, dependency-ordered)
+# ---------------------------------------------------------------------------
+#
+# REQ-CB-PERSIST-001 forbids destructive mutations from the **scoring**
+# code path (status transitions, prediction inserts, etc.) — every row
+# the orchestrator writes is append-only. ``prune_run`` is the lone
+# operator-driven maintenance helper used by the ``calibration-backtest
+# prune`` CLI subcommand to expunge obsolete runs after a library bump
+# or disk-pressure event (design §3.9).
+#
+# Schemas.py intentionally OMITS foreign keys — DuckDB's FK support is
+# limited and the project's exemplar persistence layers all rely on
+# application-level integrity. As a consequence, "cascade delete" must
+# be implemented in user-space: this function issues three DELETE
+# statements in dependency order (children first), wrapped in a single
+# transaction so a mid-flight failure either commits all three or
+# leaves the database completely untouched (no orphan trace /
+# prediction rows pointing at a vanished ``backtest_runs`` row).
+#
+# DuckDB's ``with conn:`` context manager closes the connection on
+# exit (rather than committing), so the transaction boundary is
+# expressed via explicit ``BEGIN TRANSACTION`` / ``COMMIT`` /
+# ``ROLLBACK`` mirroring ``data_ingest.persistence.migrations``.
+
+
+_PRUNE_TABLES_ORDERED: Final[tuple[str, ...]] = (
+    TABLE_TRACES,
+    TABLE_PREDICTIONS,
+    TABLE_RUNS,
+)
+"""Child-first ordering used by :func:`prune_run`.
+
+Traces and predictions hold ``run_id`` references, so they must be
+deleted before the parent row in ``backtest_runs`` to honour the
+"no orphan rows" invariant even on databases that do enforce FKs."""
+
+
+def prune_run(conn: duckdb.DuckDBPyConnection, run_id: str) -> dict[str, int]:
+    """Delete *run_id* and its descendants in dependency order.
+
+    Issues three ``DELETE`` statements wrapped in a single transaction
+    (children first):
+
+    1. ``DELETE FROM backtest_traces       WHERE run_id = ?``
+    2. ``DELETE FROM backtest_predictions  WHERE run_id = ?``
+    3. ``DELETE FROM backtest_runs         WHERE run_id = ?``
+
+    On the success path the transaction is committed and the row-count
+    dict ``{'traces': N, 'predictions': N, 'runs': N}`` is returned so
+    the CLI can print a deterministic summary. On any DuckDB driver
+    error the transaction is rolled back and the failure is re-raised
+    as :class:`BacktestPersistenceError` — the database is left in its
+    pre-call state with no orphan trace / prediction rows.
+
+    Calling :func:`prune_run` with a *run_id* that does not exist is
+    intentionally a silent no-op: every count is ``0``, no error is
+    raised. This matches the idempotent-prune contract used by the
+    CLI's ``--before ISO --confirm`` flow (T-CB-032), where multiple
+    operators may concurrently target the same stale window.
+    """
+    counts: dict[str, int] = {"traces": 0, "predictions": 0, "runs": 0}
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            traces_deleted = conn.execute(
+                f"DELETE FROM {TABLE_TRACES} WHERE run_id = ?",
+                [run_id],
+            ).fetchone()
+            counts["traces"] = int(traces_deleted[0]) if traces_deleted is not None else 0
+            predictions_deleted = conn.execute(
+                f"DELETE FROM {TABLE_PREDICTIONS} WHERE run_id = ?",
+                [run_id],
+            ).fetchone()
+            counts["predictions"] = (
+                int(predictions_deleted[0]) if predictions_deleted is not None else 0
+            )
+            runs_deleted = conn.execute(
+                f"DELETE FROM {TABLE_RUNS} WHERE run_id = ?",
+                [run_id],
+            ).fetchone()
+            counts["runs"] = int(runs_deleted[0]) if runs_deleted is not None else 0
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    except duckdb.Error as exc:
+        raise _wrap_db_error(f"prune_run({run_id!r}) failed", exc) from exc
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Row reconstruction helpers
 # ---------------------------------------------------------------------------
 
@@ -659,6 +750,7 @@ __all__ = [
     "insert_trace",
     "list_runs",
     "persist_score_summary",
+    "prune_run",
     "run_exists",
     "update_run_status",
 ]

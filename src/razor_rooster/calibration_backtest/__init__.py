@@ -30,6 +30,12 @@ from razor_rooster.calibration_backtest.errors import (
     MappingNotFoundError,
     NoPolarityError,
     RecentWindowError,
+    RunNotFoundError,
+)
+from razor_rooster.calibration_backtest.frame import (
+    DISCLAIMER,
+    FOOTER_NOTE,
+    check_cli_framing,
 )
 from razor_rooster.calibration_backtest.models import (
     BacktestPrediction,
@@ -59,6 +65,8 @@ __version__ = CALIBRATION_BACKTEST_VERSION
 
 __all__ = [
     "CALIBRATION_BACKTEST_VERSION",
+    "DISCLAIMER",
+    "FOOTER_NOTE",
     "BacktestConfigError",
     "BacktestPersistenceError",
     "BacktestPrediction",
@@ -83,9 +91,11 @@ __all__ = [
     "ReliabilityBin",
     "ReliabilityDiagram",
     "RunIdInputs",
+    "RunNotFoundError",
     "RunParameters",
     "ScoreSummary",
     "SkipReason",
     "canonicalize",
+    "check_cli_framing",
     "compute_run_id",
 ]

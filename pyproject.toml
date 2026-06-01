@@ -118,6 +118,10 @@ strict = true
 module = "razor_rooster.report_generator.*"
 strict = true
 
+[[tool.mypy.overrides]]
+module = "razor_rooster.calibration_backtest.*"
+strict = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

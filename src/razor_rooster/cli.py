@@ -6,6 +6,7 @@ Subcommands are contributed by each subsystem:
 - ``razor-rooster pattern-library`` — see :mod:`razor_rooster.pattern_library.cli`.
 - ``razor-rooster scan`` — see :mod:`razor_rooster.signal_scanner.cli`.
 - ``razor-rooster mispricing`` — see :mod:`razor_rooster.mispricing_detector.cli`.
+- ``razor-rooster calibration-backtest`` — see :mod:`razor_rooster.calibration_backtest.cli`.
 - ``razor-rooster position-engine`` — see :mod:`razor_rooster.position_engine.cli`.
 - ``razor-rooster monitor`` — see :mod:`razor_rooster.monitor.cli`.
 - ``razor-rooster kalshi`` — see :mod:`razor_rooster.kalshi_connector.cli`.
@@ -18,6 +19,7 @@ from __future__ import annotations
 import click
 
 from razor_rooster import __version__
+from razor_rooster.calibration_backtest.cli import calibration_backtest
 from razor_rooster.data_ingest.cli import ingest
 from razor_rooster.gui.cli import gui_cmd
 from razor_rooster.kalshi_connector.cli import kalshi
@@ -46,6 +48,7 @@ main.add_command(monitor)
 main.add_command(kalshi)
 main.add_command(report)
 main.add_command(gui_cmd)
+main.add_command(calibration_backtest)
 
 
 if __name__ == "__main__":  # pragma: no cover
