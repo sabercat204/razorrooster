@@ -963,82 +963,111 @@ Task IDs prefixed `T-CB-NNN`.
 
 ## Phase 8 — Acceptance
 
+> **Scout amendment (2026-06-01, Phase 8):** scout workflow `phase-8-scout` returned BLOCK with three reconcilable findings; operator banked all three (Q1 → real 90-day fixture; Q2 → wire cache inside T-CB-053; Q3 → return `None` + `SkippedRunWarning` on zero-scored runs). This phase preamble + the per-task amendments below capture every reconciliation. Pre-flight commit lands these spec edits in a single drop before any Phase 8 code.
+>
+> **Pre-flight infra (lands in pre-flight commit, not a separate task):**
+> - Register the `perf` marker in `pyproject.toml` `[tool.pytest.ini_options].markers` and update default `addopts` from `-m 'not smoke'` to `-m 'not smoke and not perf'` so `@pytest.mark.perf` is opt-in. Without this, T-CB-052 emits `PytestUnknownMarkWarning` and runs in CI by default.
+> - No CI-workflow YAML edit is needed once `addopts` is updated; CI inherits the default selector.
+
 ### T-CB-049 — Implement P-CB-001..003 property tests (determinism, time honesty, polarity coherence)
 **Depends on:** Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027).
 **References:** REQ-CB-RUN-001, REQ-CB-RUN-003, REQ-CB-FREEZE-001, REQ-CB-REPLAY-003, design §3.17, §4.1.
 **Deliverables:**
-- `tests/test_properties.py::P-CB-001` (hypothesis): generated `(params, library_version, system_revision)` tuples; `compute_run_id` produces stable hash across permutations; idempotent re-run yields bit-equal `summary_json`.
-- `P-CB-002` (hypothesis): synthetic source rows at varied timestamps; no precursor with `source_publication_ts > prediction_ts` reaches posterior; `freezer.freeze(prediction_ts)` rejects future data.
+- `tests/calibration_backtest/test_properties.py::P-CB-001` (hypothesis): generated `(params, library_version, system_revision)` tuples; `compute_run_id` produces stable hash across permutations; idempotent re-run yields bit-equal `summary_json`.
+- `P-CB-002` (hypothesis): synthetic source rows at varied timestamps; no precursor with `source_publication_ts > prediction_ts` reaches posterior; `freezer.freeze(prediction_ts)` returns `None` (does not raise) when sources are not yet frozen for the requested ts. The property MUST assert `freeze(...)` either returns a `FrozenState` whose `as_of_ts <= prediction_ts` for every source, OR returns `None`.
 - `P-CB-003`: four `(model_p ∈ {0.3, 0.7}) × (polarity ∈ {'direct','inverted'})` combinations; every scored prediction carries non-null `polarity_source`; `observed` is polarity-corrected `polymarket_resolutions.outcome`.
 - Uses `@hypothesis.given` for property-based generation; fixtures seeded at precise timestamps for reproducibility.
 **Verification:** all three properties green across hypothesis runs.
 **Out of scope:** bin alignment / skip transparency (T-CB-050).
 
+> **Scout amendment (2026-06-01, Phase 8):** P-CB-002 contract corrected — `freezer.freeze(prediction_ts)` does NOT raise on future data; it returns `None` per `engines/freezer.py:224-312` and design §3.5. Property must assert the return-value contract, not the raise contract.
+
 ### T-CB-050 — Implement P-CB-004..005 property tests (bin alignment, skip transparency)
 **Depends on:** T-CB-049.
 **References:** REQ-CB-SCORE-004, design §3.17, §3.13, §4.1.
 **Deliverables:**
-- `P-CB-004`: integration test running `backtest_runs` over a known window; calls `report_generator.engines.section_assemblers.reliability` on the same predictions; per-sector bins bit-equal within `numpy.isclose(atol=1e-9)`.
-- `P-CB-005`: iterates all `backtest_predictions` rows with `status='skipped'`; every `skip_reason` belongs to the closed enumeration (`insufficient_lag`, `invalid_resolution`, `source_data_not_frozen`, `no_polarity_resolution`, `insufficient_data`, `exception`); raises on unknown reason.
+- `P-CB-004`: integration test running `backtest_runs` over a known window; calls `report_generator.engines.section_assemblers.reliability` on the same predictions; per-sector bins bit-equal within `numpy.isclose(atol=1e-9)`. The reliability assembler returns a `dict` shaped `{'sectors': [{'bins': [...]}, ...]}` (per `report_generator/engines/section_assemblers/reliability.py:81-172`); the property compares the bins list element-wise within tolerance.
+- `P-CB-005`: iterates all `backtest_predictions` rows with `status='skipped'`; every `skip_reason` belongs to the closed enumeration `{insufficient_lag, invalid_resolution, source_data_not_frozen, no_polarity_resolution, insufficient_precursor_data, exception, mapping_not_found}` (matches `SkipReason` enum at `src/razor_rooster/calibration_backtest/models.py:83-102`); raises on unknown reason.
 - Test corpus seeded over a 90-day window exercising every skip reason at least once.
 **Verification:** properties green; skip enumeration coverage validated.
 **Out of scope:** persistence / framing (T-CB-051).
+
+> **Scout amendment (2026-06-01, Phase 8):** P-CB-005 enumeration corrected to match the live `SkipReason` enum: `insufficient_data` → `insufficient_precursor_data`, and `mapping_not_found` added (7 values total, not 6). Without this fix the property would fail on the first hypothesis run. P-CB-004 deliverable now references the actual return shape of `reliability.assemble()`.
 
 ### T-CB-051 — Implement P-CB-006..007 property tests (append-only persistence, framing linter)
 **Depends on:** T-CB-050.
 **References:** REQ-CB-CLI-002, REQ-CB-CLI-003, REQ-CB-PERSIST-001, design §3.17, §3.12, §3.9.
 **Deliverables:**
-- `P-CB-006`: create `backtest_runs` row with `status='complete'`; attempt UPDATE; confirm rejection or no-op per application logic; assert only INSERT for new runs (REQ-CB-PERSIST-001).
-- `P-CB-007`: iterate all CLI output paths (terminal, markdown, html); pass each through `position_engine.frame.linter.check_text`; assert every string passes; confirm JSON output includes `disclaimer` field.
+- `P-CB-006`: assert that `backtest_runs` is append-only at row creation. Application discipline (per `persistence/operations.py:189-249`) permits only `update_run_status()` UPDATEs that mutate `(status, completed_ts, summary_json)` and only for status transitions `in_progress → complete` or `in_progress → failed`. The property MUST (a) attempt to mutate any other column on a `backtest_runs` row and assert the application-layer guard rejects it (or, if no guard exists, ADD one in this task and assert it), and (b) attempt a duplicate INSERT for the same `run_id` and assert idempotent no-op or rejection.
+- `P-CB-007`: iterate the operator-facing CLI output paths (terminal, markdown, html); pass each through `position_engine.frame.linter.check_text(text, *, catalog, extra_phrases)`; assert every string passes (no `ImperativeLanguageDetected` raised). The JSON renderer is EXEMPT from the linter walk per REQ-CB-CLI-003 and `renderers/json_renderer.py:1-12` (consumer is a tool, not an operator); the property MUST instead assert that the JSON output includes a top-level `disclaimer` field.
 - Forbidden-phrase list verified: `place an order`, `execute the trade`, `you should buy`, `you should sell`, `guaranteed profit`, `will profit` — linter rejects each.
 **Verification:** properties green.
 **Out of scope:** performance gates (T-CB-052).
+
+> **Scout amendment (2026-06-01, Phase 8):** P-CB-006 wording corrected — literal "UPDATE rejected" was wrong because `update_run_status()` legitimately UPDATEs status/completed_ts/summary_json. The property now tests application-layer append-only discipline (only sanctioned columns + sanctioned transitions) and idempotent re-INSERT. P-CB-007 documents the JSON renderer's intentional linter carve-out so a future scout doesn't flag it as a regression.
 
 ### T-CB-052 — Implement performance gates (REQ-CB-PERF-001, REQ-CB-PERF-002)
 **Depends on:** Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027).
 **References:** REQ-CB-PERF-001, REQ-CB-PERF-002, design §4.3, §6.
 **Deliverables:**
-- `tests/test_performance.py` synthetic corpus with 4000 prediction attempts (sized to v1 seed library upper bound: 8 classes, ~500 resolutions across 5 years).
-- REQ-CB-PERF-001 smoke test: measures wall-clock for `run_backtest(params)`; asserts <5 minutes; emits `pytest.warning` (not fail) if exceeded so slow CI runners don't block.
-- REQ-CB-PERF-002 smoke test: instruments `run_backtest` with `resource.getrusage`; captures peak resident memory; asserts <2 GB; emits `pytest.warning` at threshold.
-- Reference hardware (EliteBook G8: i7-8665U, 16 GB DDR4, NVMe SSD) documented in test docstring.
-- Marker `@pytest.mark.perf` so test can be skipped on CI when needed.
-**Verification:** smoke tests run; warnings or assertion-failures recorded.
+- `tests/calibration_backtest/test_performance.py` synthetic corpus with ~4000 prediction attempts (sized to v1 seed library upper bound: 8 classes, ~500 resolutions across 5 years). Corpus is seeded by a parameterized fixture in `tests/calibration_backtest/conftest.py` (or `tests/calibration_backtest/fixtures/perf_corpus.py`) that promotes the existing `_insert_resolution` / `_insert_mapping` helpers from `test_replay_persistence.py` into shared fixtures and accepts `prediction_count`, `class_count`, `window_days` parameters.
+- REQ-CB-PERF-001 smoke test: measures wall-clock for `run_backtest(params, conn=conn, store=store, persistence_conn=conn)`; asserts wall-clock < 5 min. On exceed, calls `warnings.warn("REQ-CB-PERF-001 exceeded: wall-clock=Xs", UserWarning)` (NOT fail) so slow CI runners don't block. A hard-fail threshold of 10 min MAY also be applied as `assert duration_s < 10*60`.
+- REQ-CB-PERF-002 smoke test: captures peak resident memory via `resource.getrusage(resource.RUSAGE_SELF).ru_maxrss`. Tests MUST normalize cross-platform: `peak_bytes = ru_maxrss * (1024 if sys.platform.startswith("linux") else 1)` (macOS/BSD reports bytes; Linux reports KiB). Assert `peak_bytes < 2 * 1024**3`. On exceed, calls `warnings.warn("REQ-CB-PERF-002 exceeded: peak=XMB", UserWarning)`. Optional override via env var `RAZOR_ROOSTER_PERF_MEMORY_MB_THRESHOLD` (default 2048) for hardware tuning.
+- Reference hardware (EliteBook G8: i7-8665U, 16 GB DDR4, NVMe SSD) documented in test module docstring.
+- Tests carry `@pytest.mark.perf` marker; deselected by default via `addopts = -m 'not smoke and not perf'` (registered in pre-flight commit). Tests run when invoked explicitly: `pytest -m perf`.
+**Verification:** smoke tests run under `pytest -m perf`; warnings or assertion-failures recorded; default `pytest -q` does NOT execute them.
 **Out of scope:** golden-data audit (T-CB-053).
+
+> **Scout amendment (2026-06-01, Phase 8):** four corrections applied: (1) `pytest.warning` → `warnings.warn(..., UserWarning)`, the canonical mechanism. (2) `ru_maxrss` cross-platform normalization spelled out (was off by 1024× on Linux). (3) `@pytest.mark.perf` registration + `addopts` update made a pre-flight prerequisite, not a T-CB-052 sub-step. (4) Synthetic corpus fixture spec named so the task is implementable; the helpers are promoted from `test_replay_persistence.py` rather than re-invented.
 
 ### T-CB-053 — Implement end-to-end smoke test and golden-data calibration audit
 **Depends on:** Phase 2 (T-CB-007..T-CB-013), Phase 3 (T-CB-014..T-CB-020), Phase 4 (T-CB-021..T-CB-027).
 **References:** REQ-CB-RUN-004, REQ-CB-SCORE-004, design §4.2, §4.3.
 **Deliverables:**
-- `tests/test_e2e.py` end-to-end smoke seeding all required tables (`polymarket_resolutions`, `comparison_resolutions`, `class_market_mappings`, data_ingest precursors); invokes `run_backtest` with default parameters; asserts `status='complete'` and non-null `summary_json`.
-- Verifies precursor freezing, polarity resolution, Brier aggregation (non-NaN `overall_brier`), reliability bins.
-- Idempotent re-run: same parameters twice; second returns cached result in <1 s; row counts stable.
-- Golden-data audit on a 90-day real test corpus; per-sector Brier and reliability diagrams compared to manually computed reference values within tolerance.
-**Verification:** e2e green; golden-data tolerances met.
+- `tests/calibration_backtest/test_e2e.py` end-to-end smoke. Builds an in-memory DuckDB by running migrations in dependency order (`data_ingest → polymarket_connector → pattern_library → signal_scanner → mispricing_detector → calibration_backtest`) and seeds all upstream tables (`polymarket_resolutions`, `comparison_resolutions`, `class_market_mappings`, `comparisons`, `time_series`, `event_stream`, `sources`) before invoking `run_backtest`. Provides `insert_resolution`, `insert_mapping`, `insert_comparison_resolution`, `insert_time_series` helpers in `tests/calibration_backtest/conftest.py`.
+- `run_backtest` invoked with a `RunParameters` instance constructed via the same path the CLI uses (parser default extraction in `cli.py`); assert returned `BacktestRun` has `status='complete'` and non-NULL `summary_json` that parses to a valid `ScoreSummary`.
+- Verifies precursor freezing, polarity resolution, Brier aggregation, reliability bins.
+- **Cache fast-path wiring (in-scope for T-CB-053):** `fetch_run_status()` in `persistence/operations.py:379-396` is currently defined but never invoked from `run_backtest()` (`engines/replay.py:968-1082`) nor from `cli.py:516`. T-CB-053 implementation MUST insert a cache check after `run_id` is computed in `replay.py` (around line 1136): if `fetch_run_status(persistence_conn, run_id) == BacktestStatus.COMPLETE`, return the cached `BacktestRun` without re-running the resolution iterator loop. Test must (1) call `run_backtest(params, ...)` once and assert cold-path `status='complete'`; (2) call with identical params a second time and assert wall-clock < 1 s; (3) verify `fetch_run_status` was called before the resolution iterator on the warm path (via spy or log assertion).
+- **Zero-scored run behavior pinned (in-scope for T-CB-053):** `scoring.py:503-505` currently returns `overall_brier=0.0` when zero predictions are scored (Phase 4 advisory E flagged this as operator-misleading). T-CB-053 MUST change `scoring.py` so that `overall_brier=None` (NULL in `summary_json`) and `warnings.warn("zero predictions scored", SkippedRunWarning)` is emitted (`SkippedRunWarning` to be added to `errors.py`). T-CB-053 asserts the new behavior on a corpus that exercises the zero-scored path.
+- **Golden-data audit on real 90-day corpus (in-scope for T-CB-053; operator decision):** commit `tests/calibration_backtest/fixtures/golden_90day_corpus.duckdb` plus `tests/calibration_backtest/fixtures/golden_90day_reference.json` (per-sector reference Brier scores + reliability bin edges). Audit asserts run output matches reference values within `numpy.isclose(atol=1e-6)`. The fixture is built by a one-shot helper script (`tests/calibration_backtest/fixtures/build_golden_corpus.py`, committed alongside) that synthesizes a deterministic 90-day window with ~300 resolutions across 5 sectors and computes references via the same scoring functions called from a frozen revision; the script lives under tests so it is excluded from production wheels.
+**Verification:** e2e green; cache fast-path verified on warm path; zero-scored behavior asserts new contract; golden-data tolerances met.
 **Out of scope:** dependency audit (T-CB-054).
+
+> **Scout amendment (2026-06-01, Phase 8):** five blocking gaps closed: (1) full migration/seeding order spelled out so e2e is implementable. (2) "default parameters" disambiguated — `run_backtest` requires explicit `RunParameters`. (3) Cache fast-path is unwired today (`fetch_run_status` defined but not invoked) — T-CB-053 drives the wiring per operator Q2 decision. (4) Zero-scored `overall_brier=0.0` flagged in Phase 4 is now pinned to `None` + `SkippedRunWarning` per operator Q3 decision. (5) Real 90-day golden corpus is committed as a fixture per operator Q1 decision; deterministic build script lives under tests for reproducibility.
 
 ### T-CB-054 — Implement no-side-channels audit and no-circular-dependency static check
 **Depends on:** T-CB-048 (Phase 7 complete; pattern_library upgrade landed and meta-class verified before back-edge audit runs).
 **References:** REQ-CB-PL-002, design §3.15, §3.2.
 **Deliverables:**
-- `tests/test_dependencies.py` static AST check: `grep -r 'from calibration_backtest'` across `razor_rooster/{pattern_library,signal_scanner,mispricing_detector,report_generator,position_engine,data_ingest,polymarket_connector}` returns zero matches; same for `import calibration_backtest`.
-- Verifies `pattern_library.classes.meta.polymarket_resolution_calibration` queries DuckDB directly (no `calibration_backtest.*` calls).
-- Side-channel audit: backtest produces no network egress, no writes outside `backtest_runs/backtest_predictions/backtest_traces`, no upstream-state mutation.
-**Verification:** all checks pass.
+- `tests/calibration_backtest/test_no_side_channels.py` collection-time check: AST + grep audit asserting `from calibration_backtest` and `import calibration_backtest` return zero matches across the canonical seven packages: `pattern_library`, `signal_scanner`, `mispricing_detector`, `polymarket_connector`, `data_ingest`, `report_generator`, `position_engine`. This SUPPLEMENTS the existing runtime parametrized test in `tests/pattern_library/test_no_back_edge.py` (T-CB-044) — T-CB-054 is a faster collection-time gate; T-CB-044 stays as the per-package runtime walk.
+- Verifies `pattern_library.classes.meta.polymarket_resolution_calibration` queries DuckDB directly (no `calibration_backtest.*` imports or function calls).
+- Side-channel audit: backtest produces no network egress (greps `requests.`, `urllib`, `httpx`, `socket.` in `src/razor_rooster/calibration_backtest/`); no writes outside `backtest_runs`, `backtest_predictions`, `backtest_traces` (verify against `TABLE_RUNS`, `TABLE_PREDICTIONS`, `TABLE_TRACES` constants in `persistence/schemas.py:34-36`); no upstream-state mutation (no INSERT/UPDATE/DELETE on `polymarket_resolutions`, `comparison_resolutions`, `class_market_mappings`, `comparisons`, `time_series`, `event_stream`, `sources`).
+**Verification:** all checks pass; collection-time gate runs as part of `pytest -q` default selector.
 **Out of scope:** evolution-log update (T-CB-055).
+
+> **Scout amendment (2026-06-01, Phase 8):** scope distinguished from T-CB-044's runtime test (T-CB-054 is a collection-time gate; T-CB-044 stays as the runtime walk). Side-channel audit deliverable now names the three sanctioned tables explicitly via the `TABLE_*` constants and lists the network primitives to grep. Canonical seven-package list locked.
 
 ### T-CB-055 — Run full test suite and update evolution log; verify mypy/ruff/pytest gates
 **Depends on:** T-CB-049, T-CB-050, T-CB-051, T-CB-052, T-CB-053, T-CB-054.
 **References:** REQ-CB-PERF-001, REQ-CB-PERF-002, design §4, §7.
 **Deliverables:**
-- `pytest tests/ --strict` with all markers enabled (unit, integration, e2e, properties, performance).
-- `mypy --strict razor_rooster/calibration_backtest/` zero errors.
-- `ruff check` and `ruff format` clean.
-- All seven property tests (P-CB-001..007), all REQ-CB-* acceptance criteria, and performance gates pass.
-- `razorrooster.md` evolution-log entry updated for this subsystem: v0.1.0 SHIPPED, acceptance-test pass date, reference-hardware performance measurements, deferred tasks (DEFER-CB-*) for v2.
-- Test coverage summary recorded in README or TESTS.md.
+- Default-selector run: `./.venv/bin/pytest -q` clean (perf tests deselected via `addopts = -m 'not smoke and not perf'`).
+- Perf-marker run: `./.venv/bin/pytest -m perf -q` clean (warnings recorded if thresholds exceeded; no asserts fail under reference-hardware measurements).
+- CI hard gate: `./.venv/bin/ruff check src tests && ./.venv/bin/ruff format --check src tests && ./.venv/bin/mypy --strict src/razor_rooster/calibration_backtest tests/calibration_backtest tests/gui` clean.
+- All seven property tests (P-CB-001..007), all REQ-CB-* acceptance criteria, and performance gates pass on the local reference hardware.
+- `razorrooster.md` evolution-log entry updated for this subsystem: v0.1.0 SHIPPED, acceptance-test pass date, reference-hardware performance measurements (wall-clock, peak memory), deferred items tracked (`GOLDEN-CB-CORPUS-V2` if applicable per Phase 8 decisions; ThreadPoolExecutor per-worker conn refactor per Phase 3 advisory H; `prune` summary linter wrap per Phase 5 advisory A1; `_skip_reason_breakdown` dead-code resolution per Phase 6 advisory A1).
+- Confirm Phase 8 reconciliations in test report:
+  - SkipReason enumeration matches code (7 values).
+  - `backtest_runs` append-only discipline asserted at the application layer.
+  - JSON renderer linter-bypass documented and verified.
+  - Cache fast-path verified on warm-path e2e test.
+  - `overall_brier=None` + `SkippedRunWarning` on zero-scored runs verified.
+  - Golden-corpus reference values match within `numpy.isclose(atol=1e-6)`.
+- Test coverage summary recorded in `README.md` or `TESTS.md`.
 **Verification:** subsystem PRODUCTION_READY.
 **Out of scope:** v2 follow-on work.
+
+> **Scout amendment (2026-06-01, Phase 8):** acceptance-gate wording aligned to actual project gate commands (`./.venv/bin/...`); the strict-marker pytest invocation was non-standard. Forward-tracked advisories from Phase 3/4/5/6/7 now have explicit close-or-defer status in the evolution-log entry.
 
 ## Dependency Summary (Critical Path)
 
