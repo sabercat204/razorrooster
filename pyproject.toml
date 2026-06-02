@@ -125,10 +125,11 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra -q --strict-markers -m 'not smoke'"
+addopts = "-ra -q --strict-markers -m 'not smoke and not perf'"
 markers = [
     "integration: integration tests (deselect with '-m \"not integration\"')",
     "smoke: smoke tests against live services (deselect by default)",
+    "perf: performance gates (deselected by default; run explicitly with '-m perf')",
 ]
 
 [tool.coverage.run]
