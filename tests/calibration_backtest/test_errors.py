@@ -109,6 +109,7 @@ def test_all_listed_exhaustive() -> None:
         "BacktestPersistenceError",
         "BacktestSchemaError",
         "CalibrationBacktestError",
+        "CalibrationBacktestWarning",
         "DiskBudgetError",
         "InsufficientPrecursorData",
         "InvalidLagError",
@@ -117,6 +118,7 @@ def test_all_listed_exhaustive() -> None:
         "NoPolarityError",
         "RecentWindowError",
         "RunNotFoundError",
+        "SkippedRunWarning",
     }
     assert set(errors_module.__all__) == expected
 

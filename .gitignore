@@ -9,6 +9,10 @@ logs/
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
+# Calibration_backtest committed test fixtures live alongside the
+# build script that produces them (see operator decision Q1, 2026-06-01;
+# T-CB-053 golden-data audit).
+!tests/calibration_backtest/fixtures/*.duckdb
 
 # Python
 __pycache__/

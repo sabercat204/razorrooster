@@ -56,6 +56,7 @@ no schema mutations and opens no transactions.
 from __future__ import annotations
 
 import logging
+import warnings
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -66,6 +67,7 @@ import duckdb
 from razor_rooster.calibration_backtest.errors import (
     BacktestConfigError,
     BacktestPersistenceError,
+    SkippedRunWarning,
 )
 from razor_rooster.calibration_backtest.models import (
     BacktestPrediction,
@@ -488,6 +490,14 @@ def aggregate_run_summary(
     five-percent advisory threshold (design §3.4). When ``scored_count
     == 0`` the rate falls back to ``0.0`` so the
     :class:`ScoreSummary` validator sees a value in ``[0.0, 1.0]``.
+
+    Zero-scored-run path (operator decision Q3, 2026-06-01). When the
+    run carries zero rows with ``status='scored' AND brier_contribution
+    IS NOT NULL`` (every prediction skipped, or no predictions at all)
+    the returned :class:`ScoreSummary` carries ``overall_brier=None`` and
+    a :class:`SkippedRunWarning` is issued via :func:`warnings.warn`.
+    The renderers display ``(none)`` instead of a misleading ``0.0`` so
+    operators do not mistake "no data" for "perfectly-calibrated".
     """
     if bin_count_global < 2:
         raise BacktestConfigError(
@@ -500,8 +510,8 @@ def aggregate_run_summary(
         raise BacktestPersistenceError(
             f"aggregate_run_summary({run_id!r}) failed at overall brier query: {exc}"
         ) from exc
-    overall_brier = (
-        float(overall_row[0]) if overall_row is not None and overall_row[0] is not None else 0.0
+    overall_brier: float | None = (
+        float(overall_row[0]) if overall_row is not None and overall_row[0] is not None else None
     )
 
     per_sector = compute_brier_per_sector(conn, run_id)
@@ -530,6 +540,17 @@ def aggregate_run_summary(
         int(fallback_row[1]) if fallback_row is not None and fallback_row[1] is not None else 0
     )
     fallback_rate = (fallback_count / scored_count) if scored_count > 0 else 0.0
+
+    if overall_brier is None:
+        # Zero-scored run: warn the operator and return None so renderers
+        # display ``(none)`` instead of a misleading ``0.0``. The warning
+        # category is in the public errors surface so callers can filter
+        # / catch via ``pytest.warns(SkippedRunWarning)`` (Q3, 2026-06-01).
+        warnings.warn(
+            (f"aggregate_run_summary({run_id!r}): zero scored predictions; overall_brier=None"),
+            SkippedRunWarning,
+            stacklevel=2,
+        )
 
     return ScoreSummary(
         overall_brier=overall_brier,

@@ -1,0 +1,106 @@
+{
+  "allow_recent": false,
+  "bin_count_global": 10,
+  "class_ids": [
+    "cls-public_health",
+    "cls-economics",
+    "cls-politics",
+    "cls-climate",
+    "cls-technology"
+  ],
+  "fallback_polarity_count": 300,
+  "fallback_polarity_rate": 1.0,
+  "lag_days": 7,
+  "overall_brier": 0.3188599999999997,
+  "per_class_brier": {
+    "cls-climate": 0.30573333333333325,
+    "cls-economics": 0.2624999999999999,
+    "cls-politics": 0.2475000000000002,
+    "cls-public_health": 0.384166666666667,
+    "cls-technology": 0.3943999999999999
+  },
+  "per_sector_brier": {
+    "cls-climate": 0.30573333333333325,
+    "cls-economics": 0.2624999999999999,
+    "cls-politics": 0.2475000000000002,
+    "cls-public_health": 0.384166666666667,
+    "cls-technology": 0.3943999999999999
+  },
+  "pinned_now": "2026-05-31T12:00:00+00:00",
+  "predictions_scored": 300,
+  "predictions_skipped": 0,
+  "predictions_total": 300,
+  "reliability_bin_edges": {
+    "cls-climate": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "cls-economics": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "cls-politics": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "cls-public_health": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ],
+    "cls-technology": [
+      0.0,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
+    ]
+  },
+  "sectors": [],
+  "since_ts": "2025-08-01T00:00:00+00:00",
+  "until_ts": "2026-04-30T12:00:00+00:00",
+  "venues": [
+    "polymarket"
+  ]
+}

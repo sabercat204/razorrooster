@@ -23,6 +23,7 @@ from razor_rooster.calibration_backtest.errors import (
     BacktestPersistenceError,
     BacktestSchemaError,
     CalibrationBacktestError,
+    CalibrationBacktestWarning,
     DiskBudgetError,
     InsufficientPrecursorData,
     InvalidLagError,
@@ -31,6 +32,7 @@ from razor_rooster.calibration_backtest.errors import (
     NoPolarityError,
     RecentWindowError,
     RunNotFoundError,
+    SkippedRunWarning,
 )
 from razor_rooster.calibration_backtest.frame import (
     DISCLAIMER,
@@ -75,6 +77,7 @@ __all__ = [
     "BacktestStatus",
     "BacktestTrace",
     "CalibrationBacktestError",
+    "CalibrationBacktestWarning",
     "CompareCell",
     "CompressionAlgorithm",
     "DiskBudgetError",
@@ -95,6 +98,7 @@ __all__ = [
     "RunParameters",
     "ScoreSummary",
     "SkipReason",
+    "SkippedRunWarning",
     "canonicalize",
     "check_cli_framing",
     "compute_run_id",
