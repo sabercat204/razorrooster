@@ -19,7 +19,7 @@
     implementation_tool: "Claude Code + WEAVE (Tier 3: Full Methodology)"
     author: "Daniel Fettke"
     created: "2026-05-14"
-    loom_version: "0.54.0"
+    loom_version: "0.55.0"
     threat_context_default: "STANDARD"    # Financial risk, API key security, position sizing safety
 
 ---
@@ -210,19 +210,19 @@
 
     subsystem_name: "calibration_backtest"
     codename: "The Reckoning"
-    spec_status: "DRAFT"
-    lifecycle_stage: "SPECIFYING"
+    spec_status: "APPROVED"
+    lifecycle_stage: "IMPLEMENTED"
     spec_path: "specs/CALIBRATION_BACKTEST.md"
-    design_path: "(pending — design phase next)"
-    tasks_path: "(pending — tasks phase after design)"
-    description: "Operator-driven historical replay loop. Replays past Polymarket resolutions against the model probabilities the system would have produced at the time, then aggregates per-sector and per-class Brier scores plus reliability diagrams to validate calibration retroactively. The historical companion to the daily forward-going calibration in report_generator. Resolves OT-003 in v1; closes OT-006's pattern_library scaffolding gap via REQ-CB-PL-001."
+    design_path: "specs/CALIBRATION_BACKTEST_DESIGN.md"
+    tasks_path: "specs/CALIBRATION_BACKTEST_TASKS.md"
+    description: "Operator-driven historical replay loop. Replays past Polymarket resolutions against the model probabilities the system would have produced at the time, then aggregates per-sector and per-class Brier scores plus reliability diagrams to validate calibration retroactively. The historical companion to the daily forward-going calibration in report_generator. v1.0.0 SHIPPED 2026-06-02 (Phase 8 acceptance: T-CB-049..055). Resolved OT-003; closed OT-006's pattern_library scaffolding gap via REQ-CB-PL-001."
     threat_context: "STANDARD"
     public_interface:
       exports: [backtest_runs, backtest_predictions, backtest_traces (tables); razor-rooster calibration-backtest run/list/show/compare (CLI); /calibration-backtest, /calibration-backtest/{run_id} (GUI)]
       consumes: [pattern_library (registry, classes, posterior contract), signal_scanner (posterior reused), mispricing_detector (comparison_resolutions, class_market_mappings), polymarket_connector (polymarket_resolutions ground truth), data_ingest (source-publication-ts filter for time-honest replay)]
       produces: [Brier-score and reliability-diagram artifacts per run; pattern_library/classes/polymarket_resolution_calibration upgraded from stub to real query]
     dependencies: [pattern_library, signal_scanner, mispricing_detector, polymarket_connector, data_ingest]
-    dependents: [gui (planned — /calibration-backtest route in v0.55.0+)]
+    dependents: [gui (planned — /calibration-backtest route)]
 
 ---
 
@@ -6092,6 +6092,148 @@
           OT-003 status updated; this evolution-log entry
           appended.
 
+    - date: "2026-06-02"
+      version: "0.55.0"
+      action: "calibration_backtest v0.1.0 SHIPPED — Phase 8 acceptance gate (T-CB-049..055) green; OT-003 + OT-006 RESOLVED; subsystem registry flipped to APPROVED + IMPLEMENTED."
+      author: "Daniel Fettke"
+      subsystems_affected: [calibration_backtest (DRAFT → APPROVED + IMPLEMENTED)]
+      notes: |
+        Closes the OT-003 thread end-to-end. Between v0.54.0 (DRAFT)
+        and this round, the design + tasks landed and seven of eight
+        implementation phases shipped (commits c533f11, da3df55,
+        c0e3060/553b25e/c6e874a, 59a65ed/fd6ba08, ca7ab0e/cc95f19,
+        68666d4/63d3630, 5703a30/54c62ee). v0.55.0 records the Phase
+        8 acceptance gate that pinned the subsystem at PRODUCTION_
+        READY.
+
+        Workflow followed the same scout → amend → implement →
+        adversarial-review → verify → commit → CI pattern that ran
+        Phases 3-7. Two commits this round:
+
+        - d4ed0a4 — specs: Phase 8 pre-flight amendments for
+          T-CB-049..055. Scout returned BLOCK with three reconcilable
+          findings. Operator banked: Q1 commit a real 90-day fixture;
+          Q2 wire fetch_run_status fast-path inside T-CB-053; Q3
+          scoring zero-scored-run returns overall_brier=None and
+          emits SkippedRunWarning (Phase 4 advisory E now closed).
+          Same commit registered the `perf` pytest marker
+          (pyproject.toml: addopts = -m 'not smoke and not perf';
+          markers += "perf").
+
+        - eacbe5a — calibration_backtest Phase 8 (acceptance):
+          T-CB-049..055. 19 files changed, +4603/-76. Adds:
+          tests/calibration_backtest/{test_properties.py (P-CB-
+          001..007 across 7 hypothesis-driven properties),
+          test_performance.py (REQ-CB-PERF-001 wall-clock + REQ-CB-
+          PERF-002 peak memory with cross-platform ru_maxrss
+          normalization), test_e2e.py (full upstream-stack migration
+          ordering + cache fast-path warm-path assertion +
+          zero-scored-run warning assertion + golden-corpus calibration
+          audit at numpy.isclose(atol=1e-6)), test_no_side_channels.py
+          (collection-time AST audit: zero `from calibration_backtest`
+          imports across the canonical 7 packages, no
+          INSERT/UPDATE/DELETE outside backtest_runs/_predictions/
+          _traces, no network primitives), conftest.py (shared seeding
+          helpers + seed_synthetic_corpus fixture)}, fixtures/
+          {build_golden_corpus.py + golden_90day_corpus.duckdb (5 MB)
+          + golden_90day_reference.json}. Modifies engines/replay.py
+          (cache fast-path + _hydrate_cached_replay_result helper),
+          engines/scoring.py (zero-scored → None + warnings.warn),
+          errors.py (CalibrationBacktestWarning parent class +
+          SkippedRunWarning(run_id) constructor), models.py
+          (overall_brier widened to float | None), persistence/
+          operations.py (_SANCTIONED_UPDATE_COLUMNS frozenset +
+          _assert_runs_append_only application-layer guard).
+
+        Final acceptance gate measurements:
+
+        - ruff check + ruff format --check: clean across 539 files.
+        - mypy --strict src/razor_rooster/calibration_backtest
+          tests/calibration_backtest tests/gui: 0 errors across 80
+          source files (74 baseline + 6 Phase 8 files).
+        - pytest (default selector): 3092 passed / 18 deselected
+          (baseline 3039 → 3092, +53 new tests; +2 deselected for
+          new perf marker).
+        - pytest -m perf: 2 passed in 16.6s on the local reference
+          hardware (EliteBook G8: i7-8665U, 16 GB DDR4, NVMe SSD).
+        - CI run 26797239511: success on both ubuntu-latest and
+          macos-latest in 6m11s. The 220 pre-existing mypy errors in
+          non-CB tests remain noted as advisory-only via
+          continue-on-error: true — unchanged by this round.
+
+        Forward-tracked deferrals (recorded in OT-003's RESOLVED
+        notes for traceability):
+
+        - DEFER-CB-OPS-SENTINEL — operations.update_run_status uses
+          `if x is not None: ...` as the "skip this column" sentinel.
+          With Q3 the contract changed: `None` is now a semantic
+          value meaning "persist NULL". The empty-corpus path works
+          today because the in_progress INSERT pre-seeds NULL; a
+          future re-score path that needs to OVERWRITE a non-null
+          overall_brier with NULL would silently retain the prior
+          value. Mitigation: introduce a distinct sentinel
+          (_UNSET = object()) so None passes through as explicit
+          NULL. Tracked for v2 plumbing pass.
+
+        - DEFER-CB-CONFTEST-HELPERS — test_replay_persistence.py
+          imports seeding helpers via
+          `from tests.calibration_backtest.conftest`; pytest docs
+          say conftest.py should not be imported by user code.
+          Works today via tests/__init__.py path resolution; fragile
+          under any future importmode=importlib switch. Mitigation:
+          extract helpers to tests/calibration_backtest/
+          _seed_helpers.py and have conftest.py re-export only the
+          seed_synthetic_corpus fixture.
+
+        Phase 3-7 advisories close-or-defer status:
+
+        - Phase 3 advisory H (ThreadPoolExecutor shared-conn race;
+          DuckDB connections are not thread-safe): tests pin
+          max_workers=1 by convention; production callers must pass
+          per-worker connections. DEFERRED to v2 — not Phase 8 in
+          scope.
+        - Phase 4 advisory E (overall_brier=0.0 on zero-scored runs
+          is operator-misleading): CLOSED by Q3.
+        - Phase 5 advisory A1 (prune summary line bypasses framing
+          linter): cosmetic; T-CB-053 e2e exercises the path so a
+          future imperative regression would surface. DEFERRED.
+        - Phase 5 advisory E (REQ-CB-RUN-004 cache-hit path
+          unwired): CLOSED by Q2 (T-CB-053 wired the fast-path into
+          engines/replay.py:run_backtest after run_id is computed).
+        - Phase 6 advisory A1 (_skip_reason_breakdown is dead code;
+          ScoreSummary.as_mapping never emits the
+          predictions_skipped_by_reason key): pinned by P-CB-005's
+          enumeration assertion; cleanup DEFERRED to v2.
+        - Phase 7 advisory A1 (paraphrased canonical SQL in test_
+          canonical_join_matches_polarity_resolve_integration would
+          not catch future polarity.py WHERE-clause drift):
+          DEFERRED to v2 — small AST cross-check refactor.
+        - Phase 7 advisory A4 (`pytest --cov` broken at repo level
+          due to duckdb namespace import conflict): T-CB-052 did
+          not require coverage; DEFERRED to v2.
+
+        OT-003 status: IN_DESIGN → RESOLVED. OT-006 status: OPEN →
+        RESOLVED (the historical replay closes the operator-driven
+        half of the calibration discipline; the daily forward-going
+        half landed in report_generator v0.39-v0.41).
+
+        calibration_backtest registry entry: spec_status DRAFT →
+        APPROVED; lifecycle_stage SPECIFYING → IMPLEMENTED;
+        design_path and tasks_path now point at the real spec files
+        (CALIBRATION_BACKTEST_DESIGN.md, CALIBRATION_BACKTEST_TASKS.md).
+
+        Changed files in this round:
+
+        - razorrooster.md (this file): loom_version 0.54.0 → 0.55.0;
+          calibration_backtest registry entry flipped to APPROVED +
+          IMPLEMENTED with real design/tasks paths; OT-003 + OT-006
+          flipped to RESOLVED; this evolution-log entry appended.
+
+        No source code or spec changes in this round — v0.55.0 is
+        a documentation-only checkpoint that records the Phase 8
+        ship. The implementation diff lives in commits d4ed0a4 +
+        eacbe5a from 2026-06-01 / 2026-06-02.
+
 ---
 
 ## 5. Open Threads
@@ -6110,9 +6252,9 @@
 
     - id: "OT-003"
       title: "Backtesting calibration — model accuracy before live capital"
-      status: "IN_DESIGN — 2026-05-28; requirements drafted in v0.54.0"
+      status: "RESOLVED — calibration_backtest v0.1.0 SHIPPED 2026-06-02 in v0.55.0"
       priority: "HIGH"
-      notes: "System must paper-trade against historical Polymarket resolutions before any real capital deployed. Need resolved-contract historical data from Polymarket to validate model predictions retroactively. CAST opened in v0.53.0; DRAFT shipped in v0.54.0 at specs/CALIBRATION_BACKTEST.md (39 EARS-style requirements across 8 categories, 6 OQ-CB-* design questions, success criteria recorded). Foundation already in place: pattern_library/classes/calibration_meta_class (v0.7.0 scaffolding); polymarket_connector resolution backfill (v0.5.0/v0.6.0); mispricing_detector linkage pass writing comparison_resolutions (v0.32.0); report_generator per-sector Brier and reliability-diagram sections (v0.39–v0.41). What's still missing: historical replay loop (REQ-CB-REPLAY-*), parameterised CLI (REQ-CB-CLI-*), persistence (REQ-CB-PERSIST-*), pattern_library meta-class upgrade (REQ-CB-PL-001). Sibling to OT-006 — the backtest is the operator-driven historical companion; OT-006's daily-report reliability section is the forward-going version. Design phase next."
+      notes: "System must paper-trade against historical Polymarket resolutions before any real capital deployed. CAST opened v0.53.0; DRAFT v0.54.0 (specs/CALIBRATION_BACKTEST.md, 39 EARS requirements); design + tasks landed across Phases 1-7 (commits c533f11 → 54c62ee); Phase 8 acceptance shipped v0.55.0 (commit eacbe5a — 7 property tests P-CB-001..007, perf gates REQ-CB-PERF-001/002, e2e + real 90-day golden-data audit, no-side-channels collection-time gate, cache fast-path wired in engines/replay.py, scoring honest-NULL on zero-scored runs via SkippedRunWarning). Final test count 3092 passed / 18 deselected (perf marker opt-in: 2 perf tests pass on EliteBook G8 in 16.6s). mypy --strict on src/razor_rooster/calibration_backtest tests/calibration_backtest tests/gui = 0 errors across 80 source files; ruff + ruff format clean. CI green on ubuntu-latest + macos-latest. Closes OT-006 forward-going gap via REQ-CB-PL-001 — pattern_library/classes/polymarket_resolution_calibration upgraded from stub to real DuckDB query against backtest_runs/backtest_predictions. Forward-tracked deferrals: DEFER-CB-OPS-SENTINEL (update_run_status uses `is not None` as 'skip column' sentinel; with the Q3 contract `None` is a semantic value — empty-corpus path works because the in_progress insert pre-seeds NULL, but a future re-score path overwriting non-null with NULL would silently retain prior value; mitigation: introduce _UNSET = object()), DEFER-CB-CONFTEST-HELPERS (test_replay_persistence.py imports helpers via `from tests.calibration_backtest.conftest`; pytest docs discourage importing conftest; fragile under importmode=importlib; mitigation: extract to tests/calibration_backtest/_seed_helpers.py)."
 
     - id: "OT-004"
       title: "Execution mode — manual vs. automated"
@@ -6128,7 +6270,7 @@
 
     - id: "OT-006"
       title: "Calibration backtest — model probability vs. observed outcomes"
-      status: "OPEN"
+      status: "RESOLVED — closed by OT-003 (calibration_backtest v0.1.0 SHIPPED 2026-06-02)"
       priority: "MEDIUM"
-      notes: "Validate that the model is well-calibrated across event classes by comparing stated probabilities against historical Polymarket resolutions and other ground-truth event records. Brier score and reliability diagrams across sectors. The system is only useful if its probabilities match observed frequencies; this check gates any operator reliance on it."
+      notes: "Validate that the model is well-calibrated across event classes by comparing stated probabilities against historical Polymarket resolutions and other ground-truth event records. Brier score and reliability diagrams across sectors. The forward-going daily check landed in report_generator v0.39-v0.41; the operator-driven historical replay landed in calibration_backtest v0.1.0 (Phase 8 acceptance, 2026-06-02, harness v0.55.0). REQ-CB-PL-001 upgraded pattern_library/classes/polymarket_resolution_calibration from a stub meta-class to a real DuckDB query that surfaces the historical record. Both halves of the calibration discipline are now operational; OT-006 closes."
 
