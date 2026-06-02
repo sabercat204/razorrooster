@@ -1133,6 +1133,29 @@ def run_backtest(
         class_definition_versions=class_definition_versions,
     )
 
+    # Cache fast-path (REQ-CB-RUN-004; operator decision Q2, 2026-06-01).
+    # When persistence is wired and the persisted ``backtest_runs`` row
+    # for this canonical ``run_id`` is already :data:`BacktestStatus.COMPLETE`,
+    # short-circuit before any per-prediction work fires and return the
+    # cached :class:`ReplayResult` constructed from the persisted row +
+    # the persisted predictions / traces. The returned :class:`BacktestRun`
+    # has byte-equivalent shape to the cold-path return value so callers
+    # cannot tell the difference structurally — only the wall-clock
+    # latency reveals the cache hit.
+    if persistence_conn is not None:
+        cached_status = persistence.fetch_run_status(persistence_conn, run_id)
+        if cached_status is BacktestStatus.COMPLETE:
+            cached_result = _hydrate_cached_replay_result(persistence_conn, run_id)
+            if cached_result is not None:
+                _LOGGER.info(
+                    "calibration_backtest.cache_hit",
+                    extra={
+                        "event": "calibration_backtest.cache_hit",
+                        "run_id": run_id,
+                    },
+                )
+                return cached_result
+
     started_at = current_now
     workers = max_workers if max_workers is not None else _load_max_workers()
     if workers < 1:
@@ -1372,6 +1395,57 @@ def _validate_iterable_non_empty(values: Iterable[str], field: str) -> None:
     """Defensive guard reused by future T-CB-019 wiring (currently unused)."""
     if not list(values):
         raise BacktestConfigError(f"{field} must be non-empty")
+
+
+def _hydrate_cached_replay_result(
+    persistence_conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+) -> ReplayResult | None:
+    """Reconstruct a :class:`ReplayResult` from persisted rows for *run_id*.
+
+    The cache fast-path (REQ-CB-RUN-004; operator decision Q2,
+    2026-06-01) skips the resolution iterator entirely when a previous
+    invocation with the same canonical ``run_id`` already persisted a
+    :data:`BacktestStatus.COMPLETE` row. To preserve the cold-path
+    return contract (callers should not be able to tell the cache hit
+    from a fresh run by inspecting the result), we hydrate:
+
+    * ``run`` — the persisted :class:`BacktestRun` row, with every
+      counter / summary field populated.
+    * ``predictions`` — every persisted :class:`BacktestPrediction`
+      row for the run, ordered identically to
+      :func:`persistence.operations.fetch_predictions` (PK ASC).
+    * ``traces`` — the decoded trace dicts for every scored prediction,
+      keyed by ``prediction_id``. Skipped predictions carry no trace
+      (design §3.11).
+
+    Returns ``None`` when the run row is missing (race condition: another
+    process pruned the row between the status check and the hydration);
+    the caller falls through to a fresh replay.
+    """
+    run = persistence.fetch_run(persistence_conn, run_id)
+    if run is None:
+        return None
+    predictions = persistence.fetch_predictions(persistence_conn, run_id)
+    traces: dict[str, dict[str, Any]] = {}
+    for prediction in predictions:
+        if prediction.status is not PredictionStatus.SCORED:
+            continue
+        persisted_trace = persistence.fetch_trace(
+            persistence_conn,
+            run_id,
+            prediction.prediction_id,
+        )
+        if persisted_trace is None:
+            # Defensive: the trace row is expected for every scored
+            # prediction (REQ-CB-PERSIST-002). A missing row indicates
+            # the persistence layer was tampered with externally; skip
+            # the entry rather than corrupting the result mapping.
+            continue
+        traces[prediction.prediction_id] = dict(
+            trace_codec.decode_trace(persisted_trace.trace_json_compressed)
+        )
+    return ReplayResult(run=run, predictions=predictions, traces=traces)
 
 
 # ---------------------------------------------------------------------------

@@ -201,9 +201,16 @@ class ScoreSummary:
     the canonical encoder). Both surfaces sort keys for determinism so a
     self-compare across two runs with identical inputs produces
     byte-identical JSON.
+
+    ``overall_brier`` is ``None`` when the run produced zero scored
+    predictions (every prediction skipped, or no predictions at all).
+    The aggregator emits a :class:`SkippedRunWarning` alongside the
+    ``None`` so renderers display ``(none)`` rather than a misleading
+    ``0.0`` (operator decision Q3, 2026-06-01). When non-``None`` it is
+    constrained to ``[0.0, 1.0]``.
     """
 
-    overall_brier: float
+    overall_brier: float | None
     per_sector_brier: Mapping[str, float]
     per_class_brier: Mapping[str, float]
     reliability_diagrams: Mapping[str, ReliabilityDiagram]
@@ -213,9 +220,10 @@ class ScoreSummary:
     fallback_polarity_rate: float
 
     def __post_init__(self) -> None:
-        if not (0.0 <= self.overall_brier <= 1.0):
+        if self.overall_brier is not None and not (0.0 <= self.overall_brier <= 1.0):
             raise BacktestConfigError(
-                f"ScoreSummary.overall_brier must be in [0.0, 1.0], got {self.overall_brier!r}"
+                "ScoreSummary.overall_brier must be in [0.0, 1.0] when set, "
+                f"got {self.overall_brier!r}"
             )
         for sector, value in self.per_sector_brier.items():
             if not (0.0 <= value <= 1.0):

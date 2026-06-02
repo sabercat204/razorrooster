@@ -32,6 +32,7 @@ import duckdb
 import pytest
 
 from razor_rooster.calibration_backtest.engines.scoring import aggregate_run_summary
+from razor_rooster.calibration_backtest.errors import SkippedRunWarning
 from razor_rooster.calibration_backtest.models import (
     BacktestPrediction,
     BacktestRun,
@@ -364,13 +365,17 @@ def test_aggregate_run_summary_mixed_predictions(conn: duckdb.DuckDBPyConnection
 
 def test_aggregate_run_summary_empty_run(conn: duckdb.DuckDBPyConnection) -> None:
     operations.insert_run(conn, _make_run("run-empty"))
-    summary = aggregate_run_summary(
-        conn,
-        "run-empty",
-        bin_count_global=10,
-        bin_count_per_sector={},
-    )
-    assert summary.overall_brier == 0.0
+    with pytest.warns(SkippedRunWarning):
+        summary = aggregate_run_summary(
+            conn,
+            "run-empty",
+            bin_count_global=10,
+            bin_count_per_sector={},
+        )
+    # Operator decision Q3 (2026-06-01): zero scored predictions yield
+    # ``overall_brier=None`` so renderers display ``(none)`` instead of
+    # a misleading ``0.0``.
+    assert summary.overall_brier is None
     assert summary.per_sector_brier == {}
     assert summary.per_class_brier == {}
     assert summary.zero_resolutions_sectors == ()

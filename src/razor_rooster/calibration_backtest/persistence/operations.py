@@ -71,6 +71,60 @@ Once a row reaches ``complete`` or ``failed`` it is frozen — append-only per
 REQ-CB-PERSIST-001."""
 
 
+_SANCTIONED_UPDATE_COLUMNS: Final[frozenset[str]] = frozenset(
+    {
+        "status",
+        "completed_at",
+        "error_summary",
+        "summary_json",
+        "predictions_total",
+        "predictions_scored",
+        "predictions_skipped",
+        "overall_brier",
+        "fallback_polarity_count",
+    }
+)
+"""Closed set of columns the sanctioned status-transition path may mutate.
+
+Every column outside this set is frozen on insert. Any attempt to mutate
+``run_id``, ``since_ts``, ``until_ts``, ``lag_days``, ``class_ids_json``,
+``sectors_json``, ``venues_json``, ``library_version``, ``system_revision``,
+``started_at``, ``bin_count_global``, ``bin_count_per_sector_json``,
+``allow_recent``, or ``disclaimer_version`` raises :class:`RuntimeError` per
+REQ-CB-PERSIST-001."""
+
+
+def _assert_runs_append_only(field_name: str) -> None:
+    """Reject any non-status update path on ``backtest_runs``.
+
+    The append-only contract (REQ-CB-PERSIST-001) permits ONLY the two
+    sanctioned status transitions (``in_progress`` -> ``complete`` /
+    ``failed``) implemented by :func:`update_run_status`, which mutates
+    a closed set of columns (:data:`_SANCTIONED_UPDATE_COLUMNS`). Any
+    helper that mutates a column outside that set must call this guard
+    first; the call site immediately raises :class:`RuntimeError` with
+    the canonical message so a future regression cannot silently bypass
+    the contract.
+
+    Args:
+        field_name: The column or pseudo-field the caller intended to
+            mutate. Surfaced in the error message for triage.
+
+    Raises:
+        RuntimeError: always, unless *field_name* is one of the
+            sanctioned columns. Sanctioned columns must be mutated via
+            :func:`update_run_status` instead of the guarded helper.
+    """
+    if field_name in _SANCTIONED_UPDATE_COLUMNS:
+        raise RuntimeError(
+            f"backtest_runs.{field_name} is append-only outside of update_run_status "
+            "status transitions; use update_run_status() instead"
+        )
+    raise RuntimeError(
+        f"backtest_runs.{field_name} is append-only outside of update_run_status status transitions"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -831,6 +885,8 @@ def _row_to_prediction(row: tuple[Any, ...]) -> BacktestPrediction:
 
 
 __all__ = [
+    "_SANCTIONED_UPDATE_COLUMNS",
+    "_assert_runs_append_only",
     "complete_run",
     "count_predictions",
     "fetch_predictions",

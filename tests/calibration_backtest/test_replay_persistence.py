@@ -63,6 +63,12 @@ from razor_rooster.mispricing_detector.persistence.schemas import (
 from razor_rooster.polymarket_connector.persistence.schemas import (
     POLYMARKET_RESOLUTIONS_DDL,
 )
+from tests.calibration_backtest.conftest import (
+    insert_mapping as _insert_mapping,
+)
+from tests.calibration_backtest.conftest import (
+    insert_resolution as _insert_resolution,
+)
 
 if TYPE_CHECKING:
     from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
@@ -108,70 +114,15 @@ def conn() -> Iterator[duckdb.DuckDBPyConnection]:
 
 
 # ---------------------------------------------------------------------------
-# Seed helpers (mirrors tests/calibration_backtest/test_replay.py shapes)
+# Seed helpers (promoted to tests/calibration_backtest/conftest.py for reuse)
 # ---------------------------------------------------------------------------
-
-
-def _insert_resolution(
-    conn: duckdb.DuckDBPyConnection,
-    *,
-    condition_id: str,
-    resolution_ts: datetime,
-    winning_outcome_label: str | None = "yes",
-    invalidated: bool = False,
-    record_id: str | None = None,
-) -> None:
-    conn.execute(
-        "INSERT INTO polymarket_resolutions ("
-        "source_id, source_record_id, source_publication_ts, fetch_ts, "
-        "connector_version, source_payload_json, superseded_at, "
-        "condition_id, winning_outcome_token_id, winning_outcome_label, "
-        "resolution_ts, resolution_source, resolution_metadata, "
-        "final_yes_price, final_no_price, total_volume_at_resolution, "
-        "invalidated"
-        ") VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, 'polymarket', "
-        "NULL, NULL, NULL, NULL, ?)",
-        [
-            "polymarket",
-            record_id or condition_id,
-            resolution_ts,
-            resolution_ts,
-            "v1.0.0",
-            "{}",
-            condition_id,
-            winning_outcome_label,
-            resolution_ts,
-            invalidated,
-        ],
-    )
-
-
-def _insert_mapping(
-    conn: duckdb.DuckDBPyConnection,
-    *,
-    mapping_id: str,
-    class_id: str,
-    condition_id: str,
-    polarity_value: str = "aligned",
-    venue: str = "polymarket",
-    removed_at: datetime | None = None,
-) -> None:
-    conn.execute(
-        "INSERT INTO class_market_mappings ("
-        "mapping_id, class_id, condition_id, mapping_type, "
-        "mapping_confidence, polarity, mapped_by, mapped_at, "
-        "removed_at, notes, venue"
-        ") VALUES (?, ?, ?, 'direct', 'high', ?, 'op', ?, ?, NULL, ?)",
-        [
-            mapping_id,
-            class_id,
-            condition_id,
-            polarity_value,
-            datetime(2025, 1, 1, tzinfo=UTC),
-            removed_at,
-            venue,
-        ],
-    )
+#
+# The ``_insert_resolution`` / ``_insert_mapping`` helpers that this file
+# defined locally were promoted to the shared conftest.py during Phase 8 so
+# the e2e / perf / property tests can seed the same upstream rows without
+# re-defining the SQL inserts. The imports above bind the public names to
+# the original ``_insert_*`` aliases so every call site in this module
+# stays zero-diff.
 
 
 def _make_params(

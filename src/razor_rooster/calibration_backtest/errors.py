@@ -1,4 +1,4 @@
-"""Calibration_backtest typed exception hierarchy (T-CB-003).
+"""Calibration_backtest typed exception and warning hierarchy (T-CB-003).
 
 All recoverable and fatal failure modes raised by the
 calibration_backtest subsystem inherit from
@@ -6,6 +6,15 @@ calibration_backtest subsystem inherit from
 persistence layer) to discriminate subsystem-internal failures from
 unexpected exceptions and to map specific failure types onto closed
 ``skip_reason`` enumeration values (design Section 3.13).
+
+Warnings (operator-visible but non-fatal) are surfaced via the
+``CalibrationBacktestWarning`` family. The lone v1 member is
+:class:`SkippedRunWarning`, emitted by
+:func:`razor_rooster.calibration_backtest.engines.scoring.aggregate_run_summary`
+when a run produced zero scored predictions; the aggregator then returns
+``ScoreSummary(overall_brier=None, ...)`` so downstream renderers display
+``(none)`` instead of a misleading ``0.0`` (operator decision Q3,
+2026-06-01).
 
 Each exception class includes a structured ``__repr__`` so log
 aggregators can surface error context without bespoke formatters. The
@@ -172,11 +181,43 @@ class RecentWindowError(CalibrationBacktestError):
         self.recommended_until_ts = recommended_until_ts
 
 
+class CalibrationBacktestWarning(UserWarning):
+    """Base class for non-fatal calibration_backtest warnings.
+
+    Distinct from :class:`CalibrationBacktestError` so callers (and
+    ``pytest.warns``) can discriminate "the run produced a degenerate
+    result that the operator should know about" from "the run failed
+    and should not be acted on". Inherits :class:`UserWarning` so the
+    default :mod:`warnings` filter surfaces these to operators without
+    bespoke configuration (REQ-CB-RENDER-002).
+    """
+
+
+class SkippedRunWarning(CalibrationBacktestWarning):
+    """Emitted when an aggregated run produced zero scored predictions.
+
+    Surfaces from
+    :func:`razor_rooster.calibration_backtest.engines.scoring.aggregate_run_summary`
+    on the empty-scored-set path — every row in ``backtest_predictions``
+    for the run carries ``status='skipped'`` (or no rows exist at all).
+    The aggregator then returns a :class:`ScoreSummary` with
+    ``overall_brier=None`` so renderers display ``(none)`` rather than
+    a misleading ``0.0``. The warning carries the offending ``run_id``
+    on :attr:`run_id` for structured-log capture (operator decision Q3,
+    2026-06-01).
+    """
+
+    def __init__(self, message: str, *, run_id: str | None = None) -> None:
+        super().__init__(message)
+        self.run_id = run_id
+
+
 __all__ = [
     "BacktestConfigError",
     "BacktestPersistenceError",
     "BacktestSchemaError",
     "CalibrationBacktestError",
+    "CalibrationBacktestWarning",
     "DiskBudgetError",
     "InsufficientPrecursorData",
     "InvalidLagError",
@@ -185,4 +226,5 @@ __all__ = [
     "NoPolarityError",
     "RecentWindowError",
     "RunNotFoundError",
+    "SkippedRunWarning",
 ]
