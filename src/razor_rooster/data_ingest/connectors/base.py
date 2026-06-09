@@ -35,8 +35,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
+
+from sloptropy_common import License
 
 from razor_rooster.data_ingest.credentials import CredentialBundle
 from razor_rooster.data_ingest.normalization.base import NormalizedRecord, RawRecord
@@ -44,24 +45,6 @@ from razor_rooster.data_ingest.persistence.duckdb_store import DuckDBStore
 from razor_rooster.data_ingest.persistence.schemas import SchemaType
 
 logger = logging.getLogger(__name__)
-
-
-class License(StrEnum):
-    """License postures the connector can declare.
-
-    The values match the strings written into ``sources.license``. Sources
-    that haven't completed acknowledgement land on ``UNKNOWN`` until their
-    startup gate writes the canonical posture.
-    """
-
-    PUBLIC_DOMAIN = "PUBLIC_DOMAIN"
-    CC_BY = "CC_BY"
-    CC_BY_NC = "CC_BY_NC"
-    CC_BY_SA = "CC_BY_SA"
-    ACLED_TERMS_VERSIONED = "ACLED_TERMS_VERSIONED"
-    POLYMARKET_TERMS_VERSIONED = "POLYMARKET_TERMS_VERSIONED"
-    TERMS_OF_SERVICE = "TERMS_OF_SERVICE"
-    UNKNOWN = "UNKNOWN"
 
 
 @dataclass(frozen=True, slots=True)
