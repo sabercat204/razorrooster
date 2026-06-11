@@ -1,10 +1,10 @@
-# Calibration Backtest — Requirements (v0.1 DRAFT)
+# Calibration Backtest — Requirements (v0.1)
 
 **Subsystem name:** `calibration_backtest`
 **Codename:** The Reckoning
-**Spec status:** DRAFT (CAST opened in Loom v0.53.0 against OT-003)
+**Spec status:** SHIPPED (v0.1.0 at Loom v0.55.0; CAST opened in Loom v0.53.0 against OT-003)
 **Threat context:** STANDARD (financial-decision-support; consumes only on-disk data; no network egress; no operator capital exposure beyond what the existing v1 pipeline already exposes)
-**Lifecycle stage:** SPECIFYING
+**Lifecycle stage:** PRODUCTION_READY
 
 ---
 
