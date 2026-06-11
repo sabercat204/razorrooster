@@ -27,10 +27,10 @@ dependencies = [
     "pytz>=2024.1",
     "pyyaml>=6.0",
     "scipy>=1.12",
-    # Editable install from workspace path until the package is published:
-    #   pip install -e ../sloptropy-common
-    # Or from GitHub:
-    #   pip install "sloptropy-common @ git+ssh://git@github.com/sabercat204/sloptropy-common.git@main"
+    # Private repo; not on PyPI. Must be pre-installed before `pip install -e .`:
+    #   Local: pip install -e ../sloptropy-common
+    #   CI:    pip install "sloptropy-common @ git+ssh://git@github.com/sabercat204/sloptropy-common.git@<sha>"
+    # Bare name here so an already-installed copy satisfies the dep.
     "sloptropy-common",
     "uvicorn>=0.30",
     "zstandard>=0.22.0,<1.0",
