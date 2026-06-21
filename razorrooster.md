@@ -16,7 +16,7 @@
     package_name: "razor_rooster"
     repo_root: "~/Projects/razor-rooster"
     spec_directory: "specs/"
-    implementation_tool: "Claude Code + WEAVE (Tier 3: Full Methodology)"
+    implementation_tool: "spec-driven manual workflow"
     author: "Daniel Fettke"
     created: "2026-05-14"
     loom_version: "0.55.0"
