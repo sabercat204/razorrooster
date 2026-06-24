@@ -7,7 +7,7 @@ name = "razor_rooster"
 version = "0.1.0"
 description = "Geopolitical event forecasting and calibration engine"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [
     { name = "Daniel Fettke" },
@@ -61,7 +61,7 @@ include = ["razor_rooster*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -76,13 +76,17 @@ select = [
 ]
 ignore = [
     "E501", # line length handled by formatter
+    # PEP-695 type-parameter syntax (def f[T]()); opt-in modernization, not a
+    # correctness rule. The existing TypeVar-based generics are correct under
+    # py312; adopting PEP-695 is a deliberate future pass, not a CI gate.
+    "UP047",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]  # allow assert False in tests
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = false  # global default
 warn_unused_ignores = true
 warn_redundant_casts = true
