@@ -2,32 +2,45 @@
 
 Geopolitical event forecasting and calibration engine. Educational decision-support for an individual operator. **Recommendation-only — no automated execution, no order placement, no real capital handling.**
 
-The system pulls public data, computes historical base rates over configurable retrospective windows, scans current conditions for matches against precursor signatures, surfaces deltas between model probabilities and Polymarket-implied probabilities, and writes a structured report. The operator forms the view; the operator decides whether to act.
+The system pulls public data, computes historical base rates over configurable retrospective windows, scans current conditions for matches against precursor signatures, surfaces deltas between model probabilities and market-implied probabilities (Polymarket + Kalshi), and writes a structured report. The operator forms the view; the operator decides whether to act.
+
+## Where to start
+
+Pick the door that matches you:
+
+| If you are… | Read |
+| - | - |
+| **New here and want it running** | [`docs/STARTER.md`](docs/STARTER.md) — clone → install → first report in ~20 min |
+| **Operating it day-to-day** | [`docs/user_guide.md`](docs/user_guide.md) — every command, flag, config knob, workflow, and troubleshooting step |
+| **Modifying the code** | [`razorrooster.md`](razorrooster.md) (living project state) and [`specs/`](specs/) (requirements / design / tasks per subsystem) |
+| **Going deep on one subsystem** | the per-subsystem references under [`docs/`](docs/) — see [See also](#see-also) |
 
 ## Status
 
-v1 implementation in progress. Subsystem coverage:
+**v1 is functionally complete.** All eleven subsystems are PRODUCTION_READY:
 
-| Subsystem | Spec | Implementation |
-| - | - | - |
-| `data_ingest` | DONE | Phases 0-6 DONE, Phase 7 partial (T-070, T-071, T-074 done; T-072, T-073 are operator-driven) |
-| `polymarket_connector` | DONE | Phases 0-6 DONE, Phase 7 partial (T-PMC-070, T-PMC-071, T-PMC-074 done; T-PMC-072, T-PMC-073 are operator-driven) |
-| `pattern_library` | DONE | Phases 0-8 DONE; T-PL-081 first-run-on-real-hardware is operator-driven |
-| `signal_scanner` | DONE | Phases 0-5 DONE; T-SCAN-081 first-scan-on-real-hardware is operator-driven |
-| `mispricing_detector` | DONE | Phases 0-6 DONE; T-MD-081 first-cycle-on-real-hardware is operator-driven |
-| `position_engine` | DONE | Phases 0-8 DONE; T-PE-081 first-cycle-on-real-hardware is operator-driven |
-| `monitor` | DONE | Phases 0-5 DONE; T-MON-081 first-cycle-on-real-hardware is operator-driven |
-| `report_generator` | DONE | Phases 0-6 DONE; T-RG-082 first-report-on-real-hardware is operator-driven |
-| `kalshi_connector` | DONE | Phases 0-6 + Phase 7 T-KSI-070 + T-KSI-074 DONE; T-KSI-071, T-KSI-072, T-KSI-073 are operator-driven |
+| Subsystem | Role |
+| - | - |
+| `data_ingest` | Multi-source public data ingestion (The Trough) |
+| `polymarket_connector` | Polymarket public-data connector (The Wire) |
+| `kalshi_connector` | Read-only Kalshi data ingestion (The Stamp) |
+| `pattern_library` | Historical event-pattern catalogue (The Bone Pile) |
+| `signal_scanner` | Live evaluation against historical patterns (The Nose) |
+| `mispricing_detector` | Model-vs-market comparison layer (The Liver) |
+| `position_engine` | Paper-analysis sizing layer (The Spur) |
+| `monitor` | Active-observation layer for watched analyses (The Comb) |
+| `report_generator` | Operator-facing report renderer (The Crow) |
+| `gui` | Read-only local operator GUI |
+| `calibration_backtest` | Replay-based calibration backtest (The Reckoning) — shipped v0.1.0 |
 
-For the full spec set, see `specs/`. The living manifest is `razorrooster.md`.
+Package version: `0.1.0`. Methodology harness (`razorrooster.md`): v0.55.0. For the full spec set, see `specs/`; the living project state is `razorrooster.md`.
 
 ## Prerequisites
 
-- macOS or Linux (Python 3.11+).
-- Python 3.12 recommended (`/opt/homebrew/bin/python3.12` on the development machine).
-- ~150 GB free disk for the v1 corpus (100 GB hard cap with 80% warn / 95% pause).
+- macOS or Linux, **Python 3.12** (the project requires `>=3.12`).
+- ~150 GB free disk if you backfill the full v1 corpus (100 GB hard cap with 80% warn / 95% pause); a few GB is plenty to get started.
 - Optional API credentials for authenticated sources (see "Credentials" below).
+- A private dependency, `sloptropy-common`, that is not on PyPI — see [Setup](#setup).
 
 ## Setup
 
@@ -35,10 +48,14 @@ For the full spec set, see `specs/`. The living manifest is `razorrooster.md`.
 make install            # creates .venv, installs the package + dev deps
 make test               # runs unit + integration tests (skips smoke marker)
 make lint               # ruff lint + format check
-make typecheck          # mypy strict on data_ingest + polymarket_connector
+make typecheck          # mypy on data_ingest + polymarket_connector + pattern_library
 ```
 
 The `Makefile` is the single source of truth for tooling commands. `make help` lists every target.
+
+> **Private dependency.** `razor_rooster` depends on `sloptropy-common`, which is **not published to PyPI**. A clean `make install` needs it pre-installed: locally via `pip install -e ../sloptropy-common`, or in CI via the SSH deploy key (`git+ssh://…/sloptropy-common.git`). If install fails resolving `sloptropy-common`, that's the cause.
+
+For a guided, beginner-friendly walk from clone to first report, use [`docs/STARTER.md`](docs/STARTER.md) instead of the terse sequence below.
 
 ## Credentials
 
@@ -69,13 +86,19 @@ The acknowledgement gate is implemented in code; see `src/razor_rooster/data_ing
 
 ## First run
 
-From a clean checkout:
+The fastest path is the one-shot bootstrap, which runs every stage the current credentials allow and reports what's still blocked:
 
 ```bash
 make install
-cp .env.example .env                # if you have one; otherwise create .env yourself
-# edit .env with credentials for the sources you want to enable
+cp .env.example .env                # then edit it with the credentials you have
+make bootstrap                      # idempotent: schema → ingest → patterns → venues → scan → … → report
+```
 
+`make bootstrap` is safe to re-run any time; it writes a per-step timing summary and a JSON artifact under `data/logs/`, and ends by listing exactly which env var or command would unblock each remaining stage. See [`docs/STARTER.md`](docs/STARTER.md) for the guided version.
+
+To do the data layer by hand instead:
+
+```bash
 razor-rooster ingest init             # apply schema migrations to data/trough.duckdb
 razor-rooster ingest cycle            # run one incremental cycle (writes JSONL log)
 razor-rooster ingest status           # show per-source freshness
@@ -896,6 +919,7 @@ ACLED data is subject to ACLED's terms; Razor-Rooster enforces the conservative 
 
 ## See also
 
+- `docs/STARTER.md` — beginner setup walkthrough: clone → install → first report
 - `docs/user_guide.md` — operator-facing reference: every CLI command, every option, every config knob, common workflows, troubleshooting
 - `razorrooster.md` — LOOM (project state of truth)
 - `specs/` — full requirements / design / tasks for each subsystem

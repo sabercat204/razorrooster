@@ -113,9 +113,10 @@ Verify the install:
 .venv/bin/razor-rooster --help
 ```
 
-You will see the eight subsystem command groups: `ingest`,
+You will see the eleven subsystem command groups: `ingest`,
 `polymarket`, `kalshi`, `pattern-library`, `scan`, `mispricing`,
-`position-engine`, `monitor`, `report`.
+`position-engine`, `monitor`, `report`, `gui`, and
+`calibration-backtest`.
 
 **✓ Verification checkpoint.** If both commands succeed and the
 help output lists the subsystems, the package and CLI entry
@@ -162,8 +163,13 @@ Two operator-acknowledgement variables are also worth setting in
 
 | Variable | What it does |
 | - | - |
-| `RAZOR_ROOSTER_JURISDICTION` | Your jurisdiction string (e.g. `US-NY`). The Polymarket and Kalshi geo gates check this against restricted-jurisdiction allow-lists before any outbound request. |
+| `OPERATOR_JURISDICTION` | Your jurisdiction as an ISO 3166-1 code (e.g. `US`, `DE`). The Polymarket and Kalshi geo gates read this before any outbound request — Polymarket as a deny-list (`config/restricted_jurisdictions.yaml`), Kalshi as an allow-list (`config/kalshi_allowed_jurisdictions.yaml`). The `jurisdiction` field of `config/operator.yaml` is the fallback; the env var wins on conflict. |
 | `RAZOR_ROOSTER_CONTACT` | Contact string interpolated into outbound `User-Agent` headers (REQ-PM-COMPAT-002 / REQ-KALSHI-COMPAT-002). Use an email or repo URL. |
+
+> **Note.** The geo gates read `OPERATOR_JURISDICTION`, not
+> `RAZOR_ROOSTER_JURISDICTION`. Earlier drafts of this guide and of
+> `.env.example` named the latter; only `OPERATOR_JURISDICTION` (or
+> `config/operator.yaml`) is consulted by the code.
 
 **✓ Verification checkpoint.** Confirm `.env` is set up
 correctly without exposing secrets:
@@ -173,7 +179,7 @@ correctly without exposing secrets:
 for v in FRED_API_KEY EIA_API_KEY NRC_ADAMS_API_KEY \
          REGULATIONS_GOV_API_KEY NOAA_CDO_TOKEN \
          ACLED_USERNAME ACLED_PASSWORD \
-         RAZOR_ROOSTER_JURISDICTION RAZOR_ROOSTER_CONTACT; do
+         OPERATOR_JURISDICTION RAZOR_ROOSTER_CONTACT; do
     if [[ -n "$(grep "^$v=" .env 2>/dev/null | cut -d= -f2-)" ]]; then
         echo "  ✓ $v set"
     else
@@ -455,7 +461,7 @@ on a cadence that matches their domain interest:
 | Symptom | Most likely cause | Where to look |
 | - | - | - |
 | `ingest cycle` raises `403` from FRED | Missing or invalid `FRED_API_KEY` | `.env`, then `data/logs/{timestamp}-ingest-cycle-*.log` |
-| `polymarket sync` refuses with `geo_gate` | `RAZOR_ROOSTER_JURISDICTION` resolves to a restricted jurisdiction | `config/restricted_jurisdictions.yaml` lists which ones |
+| `polymarket sync` refuses with `geo_gate` | `OPERATOR_JURISDICTION` resolves to a restricted jurisdiction | `config/restricted_jurisdictions.yaml` lists which ones |
 | `position-engine run` errors on `no bankroll_config` | Bankroll never declared | [Step 4](#step-4--declare-the-analytical-bankroll) |
 | `report generate` raises `ImperativeLanguageDetected` | Operator-supplied content (e.g., a class title) contains a forbidden phrase | `config/forbidden_phrases.yaml` lists every blocked phrase |
 | Report renders empty "No comparisons surfaced this cycle" forever | `mispricing` thresholds too strict for the operator's corpus | `report measurements --kind cross_venue_spread_bps` shows the empirical distribution; consider `report suggest-thresholds` |
@@ -479,13 +485,13 @@ on a cadence that matches their domain interest:
 
 ## 1. Architecture at a glance
 
-Razor-Rooster is eight subsystems wired in a directed acyclic graph.
-Data flows top-down; CLI commands generally run in order:
+Razor-Rooster is eleven subsystems wired in a directed acyclic graph.
+Data flows top-down; the daily-cadence CLI commands generally run in order:
 
 ```
 data_ingest          (public API ingestion)
   ↓
-polymarket_connector (market data ingestion)
+polymarket_connector + kalshi_connector  (market data ingestion)
   ↓
 pattern_library      (historical base rates + signatures)
   ↓
@@ -500,21 +506,36 @@ monitor              (follow-up tracking)
 report_generator     (operator-facing document)
 ```
 
+Two subsystems sit outside the daily DAG:
+
+- **`gui`** — a read-only local web view over everything the pipeline has
+  already persisted. It produces no new analytical state; launch it any time
+  with `razor-rooster gui`.
+- **`calibration_backtest`** ("The Reckoning") — an operator-driven historical
+  replay that scores past predictions against resolved markets. Run it on
+  demand, not on the daily cadence; see `razor-rooster calibration-backtest run`.
+
 Every subsystem persists to a single DuckDB file at
 `data/trough.duckdb` (override with `--db PATH` or `RAZOR_ROOSTER_DB`
-env var). Each subsystem has its own table namespace and its own
-schema-migration version range:
+env var). Each subsystem owns its own table namespace and runs its own
+migration sequence (`run_pending_<subsystem>_migrations`). Migration
+version integers are namespaced **per subsystem**, so the same integer
+(e.g. `6001`) can appear in two subsystems without collision; they are not
+a single global sequence. Approximate namespace bands the subsystems
+advertise:
 
-| Range | Subsystem |
+| Band | Subsystem |
 | - | - |
-| 1–999 | `data_ingest` |
-| 1001–1999 | `polymarket_connector` |
-| 2001–2999 | `pattern_library` |
-| 3001–3999 | `signal_scanner` |
-| 4001–4999 | `mispricing_detector` |
-| 5001–5999 | `position_engine` |
-| 6001–6999 | `monitor` |
+| 1+ | `data_ingest` |
+| 1001+ | `polymarket_connector` |
+| 2001+ | `pattern_library` |
+| 3001+ | `signal_scanner` |
+| 4001+ | `mispricing_detector` |
+| 5001+ | `position_engine` |
+| 6001+ | `monitor` |
+| 6001+ | `calibration_backtest` (own migration runner; separate from monitor) |
 | 7001+ | `report_generator` |
+| 8001+ | `kalshi_connector` |
 
 Migrations apply automatically when any CLI subcommand opens the store.
 
@@ -526,7 +547,8 @@ The intended cadence on the operator's hardware:
 
 ```bash
 razor-rooster ingest cycle              # pull public data
-razor-rooster polymarket sync           # pull market data
+razor-rooster polymarket sync           # pull Polymarket market data
+razor-rooster kalshi sync               # pull Kalshi market data
 razor-rooster pattern-library refresh   # recompute base rates + signatures
 razor-rooster scan run                  # score current conditions
 razor-rooster mispricing run            # compare model to market
@@ -534,6 +556,10 @@ razor-rooster position-engine run       # produce sizing analyses
 razor-rooster monitor run               # update watched-analysis follow-ups
 razor-rooster report generate           # render the daily report
 ```
+
+> New here? [§0 Getting started](#0-getting-started) walks this from a clean
+> clone with verification checkpoints; the condensed
+> [`docs/STARTER.md`](STARTER.md) is the fastest path to a first report.
 
 Each step depends on the prior step's output but is failure-isolated —
 if `polymarket sync` fails, `ingest cycle` and earlier-state queries
