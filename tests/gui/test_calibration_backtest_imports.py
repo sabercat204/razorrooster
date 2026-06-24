@@ -156,9 +156,17 @@ def test_create_app_smoke_no_circular_import(tmp_path: Path) -> None:
     pytest's collection phase, so the failure mode this test catches
     is the local-import inside ``_register_routes`` bringing in a
     cyclic dependency at construction time. We additionally verify
-    that the calibration-backtest router is reachable on the app's
-    ``routes`` table so a silent registration regression also surfaces.
+    that the calibration-backtest router is reachable by issuing a
+    real request so a silent registration regression also surfaces.
+
+    Reachability is asserted behaviourally (a live ``GET`` returns
+    200) rather than by scanning ``app.routes`` for the path: newer
+    Starlette wraps each ``include_router`` result in an opaque node
+    whose ``path`` is ``None``, so a flat route-table scan reports a
+    false regression even though the endpoint serves correctly.
     """
+
+    from fastapi.testclient import TestClient
 
     from razor_rooster.calibration_backtest.persistence.migrations import (
         run_pending_calibration_backtest_migrations,
@@ -175,13 +183,10 @@ def test_create_app_smoke_no_circular_import(tmp_path: Path) -> None:
         store.close()
 
     app = create_app(db_path=db_path)
-    cb_paths = [
-        getattr(route, "path", "")
-        for route in app.routes
-        if isinstance(getattr(route, "path", ""), str)
-        and getattr(route, "path", "").startswith("/calibration-backtest")
-    ]
-    assert cb_paths, (
-        "calibration-backtest router missing from app.routes after create_app — "
-        "the local import in _register_routes regressed."
+    with TestClient(app) as client:
+        response = client.get("/calibration-backtest")
+    assert response.status_code == 200, (
+        "calibration-backtest list view unreachable after create_app "
+        f"(got {response.status_code}) — the local import in "
+        "_register_routes regressed."
     )
