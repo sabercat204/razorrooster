@@ -45,13 +45,20 @@ Package version: `0.1.0`. Methodology harness (`razorrooster.md`): v0.55.0. For 
 ## Setup
 
 ```bash
-make install            # creates .venv, installs the package + dev deps
+make install            # creates .venv, installs package + dev deps (pinned via constraints.txt)
 make test               # runs unit + integration tests (skips smoke marker)
 make lint               # ruff lint + format check
 make typecheck          # mypy on data_ingest + polymarket_connector + pattern_library
 ```
 
 The `Makefile` is the single source of truth for tooling commands. `make help` lists every target.
+
+> **Reproducible installs.** `make install` pins the full transitive dependency
+> closure via `constraints.txt`, so every machine and CI run gets identical
+> versions. The deps declared in `pyproject.toml` are lower-bound-only; the pins
+> are what make builds reproducible. To intentionally take newer deps, run
+> `make upgrade`, then `make test lint typecheck`, then `make lock` to refreeze
+> `constraints.txt` from the verified environment.
 
 > **Private dependency.** `razor_rooster` depends on `sloptropy-common`, which is **not published to PyPI**. A clean `make install` needs it pre-installed: locally via `pip install -e ../sloptropy-common`, or in CI via the SSH deploy key (`git+ssh://…/sloptropy-common.git`). If install fails resolving `sloptropy-common`, that's the cause.
 

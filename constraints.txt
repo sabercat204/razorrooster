@@ -1,0 +1,75 @@
+# constraints.txt — fully-pinned transitive closure for reproducible installs.
+#
+# WHY: razor_rooster declares lower-bound-only deps (e.g. numpy>=1.26) with no
+# lockfile. CI ran `pip install -e ".[dev]"` and re-resolved to the latest
+# release every run. On 2026-06-24 main went red twice in one sitting from this
+# drift: unpinned numpy pulled PEP-695 stubs mypy rejected, then a fastapi/
+# starlette bump stopped flattening included routes and broke a GUI test. This
+# file pins the ENTIRE closure (runtime + dev tooling + transitive) to a snapshot
+# verified green: 3092 tests passed, ruff clean, mypy --strict CB gate clean.
+#
+# APPLY: pip install -e ".[dev]" -c constraints.txt  (see Makefile `install`).
+# A constraints file only pins versions of packages that get installed; it does
+# not itself install anything. razor_rooster (-e .) and sloptropy-common
+# (git+ssh, pinned @cb841a4 in CI) are editable/VCS installs and are
+# deliberately ABSENT here — constraints cannot pin a URL/editable requirement.
+#
+# REGENERATE after an intentional dependency change (see Makefile `upgrade`/`lock`):
+#   make upgrade && make lock     # re-resolve, re-verify gates, then refreeze
+# NOT hash-pinned (no --require-hashes): the failure class was version drift, and
+# --require-hashes is incompatible with the editable + git-VCS installs above.
+#
+# Snapshot: 2026-06-25 | Python 3.12 | source: pip freeze --exclude-editable
+# ---------------------------------------------------------------------------
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.13.0
+ast_serialize==0.3.0
+certifi==2026.4.22
+click==8.3.3
+coverage==7.14.0
+duckdb==1.5.2
+fastapi==0.136.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+hypothesis==6.155.1
+idna==3.15
+iniconfig==2.3.0
+Jinja2==3.1.6
+librt==0.11.0
+MarkupSafe==3.0.3
+mypy==2.1.0
+mypy_extensions==1.1.0
+numpy==2.4.4
+numpy-typing-compat==20251206.2.4
+optype==0.17.0
+packaging==26.2
+pandas==3.0.3
+pandas-stubs==3.0.0.260204
+pathspec==1.1.1
+pluggy==1.6.0
+pyarrow==24.0.0
+pydantic==2.13.4
+pydantic_core==2.46.4
+Pygments==2.20.0
+pytest==9.0.3
+pytest-cov==7.1.0
+pytest-recording==0.13.4
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+pytz==2026.2
+PyYAML==6.0.3
+ruff==0.15.12
+scipy==1.17.1
+scipy-stubs==1.17.1.4
+six==1.17.0
+sortedcontainers==2.4.0
+starlette==1.0.1
+types-PyYAML==6.0.12.20260510
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+uvicorn==0.47.0
+vcrpy==8.1.1
+wrapt==2.1.2
+zstandard==0.25.0

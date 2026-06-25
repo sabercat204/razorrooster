@@ -9,7 +9,9 @@ VENV_BIN := $(VENV)/bin
 help:
 	@echo "Razor-Rooster development targets:"
 	@echo "  make venv         Create the virtual environment."
-	@echo "  make install      Install package + dev dependencies into the venv."
+	@echo "  make install      Install package + dev deps, pinned via constraints.txt."
+	@echo "  make upgrade      Re-resolve deps to latest (ignores the pins)."
+	@echo "  make lock         Refreeze constraints.txt from the current venv."
 	@echo "  make test         Run unit + integration tests."
 	@echo "  make test-unit    Run unit tests only (excludes integration + smoke)."
 	@echo "  make lint         Run ruff."
@@ -28,7 +30,24 @@ venv: $(VENV)/bin/activate
 
 .PHONY: install
 install: venv
-	$(VENV_BIN)/pip install -e ".[dev]"
+	$(VENV_BIN)/pip install -e ".[dev]" -c constraints.txt
+
+# Intentionally re-resolve every dependency to the latest version allowed by
+# pyproject.toml, ignoring the pins. Run this when you mean to take new deps;
+# follow with `make test lint typecheck` then `make lock` to capture the result.
+.PHONY: upgrade
+upgrade: venv
+	$(VENV_BIN)/pip install -e ".[dev]" --upgrade
+
+# Refreeze constraints.txt from whatever is currently installed in the venv,
+# preserving the documentation header above the pins. Only the verified-green
+# venv should be locked — run the gates first.
+.PHONY: lock
+lock:
+	@sed -n '1,/^# ----/p' constraints.txt > constraints.txt.tmp
+	@$(VENV_BIN)/python -m pip freeze --exclude-editable >> constraints.txt.tmp
+	@mv constraints.txt.tmp constraints.txt
+	@echo "constraints.txt refrozen: $$(grep -c '==' constraints.txt) pins."
 
 .PHONY: test
 test:

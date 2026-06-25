@@ -31,10 +31,17 @@ jobs:
           ssh-private-key: ${{ secrets.SLOPTROPY_COMMON_DEPLOY_KEY }}
 
       - name: Install dependencies
+        # constraints.txt pins the full transitive closure to a verified-green
+        # snapshot, so CI installs the same versions every run instead of
+        # re-resolving to latest (the drift that turned main red twice on
+        # 2026-06-24). sloptropy-common is installed first, unconstrained — it
+        # is a git+ssh dep absent from constraints.txt (which cannot pin a URL
+        # requirement) and declares no deps of its own. The already-installed
+        # copy then satisfies the bare `sloptropy-common` name in razor_rooster.
         run: |
           python -m pip install --upgrade pip
           pip install "sloptropy-common @ git+ssh://git@github.com/sabercat204/sloptropy-common.git@cb841a4"
-          pip install -e ".[dev]"
+          pip install -e ".[dev]" -c constraints.txt
 
       - name: Lint (ruff check)
         run: ruff check src tests
