@@ -889,6 +889,48 @@ def _evaluate_one_resolution(
         )
 
 
+def _evaluate_one_resolution_threadsafe(
+    *,
+    run_id: str,
+    params: RunParameters,
+    resolution: MappedResolution,
+    base_conn: duckdb.DuckDBPyConnection,
+    store: DuckDBStore,
+    library_version: int | None,
+    min_support: int,
+) -> _PredictionOutcome:
+    """Thread-pool entry point: evaluate one resolution on a private cursor.
+
+    DuckDB connections are not thread-safe; passing the shared ``base_conn``
+    into concurrent workers segfaults the interpreter under contention. Each
+    worker instead derives its own ``base_conn.cursor()`` — a distinct handle
+    over the same database instance — so reads never cross a connection
+    boundary. The cursor is closed before returning so worker handles do not
+    accumulate for the lifetime of ``base_conn`` (cursor close is isolated and
+    does not disturb ``base_conn`` or sibling cursors). Closing is best-effort:
+    a failure to close must not mask a successful evaluation result.
+    """
+    worker_conn = base_conn.cursor()
+    try:
+        return _evaluate_one_resolution(
+            run_id=run_id,
+            params=params,
+            resolution=resolution,
+            conn=worker_conn,
+            store=store,
+            library_version=library_version,
+            min_support=min_support,
+        )
+    finally:
+        try:
+            worker_conn.close()
+        except Exception:  # pragma: no cover - defensive cursor teardown
+            _LOGGER.warning(
+                "calibration_backtest.replay.cursor_close_failed",
+                extra={"event": "worker_cursor_close_failed", "run_id": run_id},
+            )
+
+
 def _resolve_definition_version(trace: Mapping[str, Any]) -> int:
     """Pull ``definition_version`` from a scanner trace dict.
 
@@ -1042,7 +1084,10 @@ def run_backtest(
             (``polymarket_resolutions``, ``class_market_mappings``,
             ``comparisons``, ``comparison_resolutions``, the four
             canonical data_ingest tables, and the ``sources`` registry)
-            are visible.
+            are visible. A single connection is sufficient regardless of
+            ``max_workers``: when the executor engages, each worker derives
+            its own ``conn.cursor()`` rather than sharing this handle
+            across threads (DuckDB connections are not thread-safe).
         store: :class:`DuckDBStore` forwarded to
             :func:`evaluate_class_at_frozen_time` for the
             signal_scanner posterior pipeline.
@@ -1217,16 +1262,24 @@ def run_backtest(
         )
 
         # Step 3 — per-prediction work. The bounded ThreadPoolExecutor
-        # mirrors signal_scanner's pattern; DuckDB connections are not
-        # thread-safe, so when ``workers > 1`` callers must pass distinct
-        # connections per worker. T-CB-019 documents the constraint and
-        # keeps the default at 4 workers per design §3.5 /
-        # config/backtest.yaml.
+        # mirrors signal_scanner's pattern. A single DuckDB connection is
+        # NOT thread-safe — sharing one ``conn`` across workers segfaults
+        # the interpreter under contention (verified on duckdb 1.5.2), not
+        # merely returns wrong rows. Each worker therefore evaluates
+        # against its own ``conn.cursor()``: a DuckDB cursor is a distinct
+        # handle that shares the same underlying database instance (so it
+        # sees every row already committed on ``conn``, including in
+        # ``:memory:`` databases) while isolating per-thread execution
+        # state. ``store`` is independently thread-safe (it is a pooled
+        # connection wrapper, not a bare handle), so it is shared as-is.
+        # The default stays at 4 workers per design §3.5 /
+        # config/backtest.yaml (T-CB-019).
         outcomes: list[_PredictionOutcome] = []
         if workers == 1 or not resolutions:
             # Fast-path: single-threaded iteration. Avoids spinning up
             # the executor when the per-call overhead would dominate
-            # (e.g. tests that seed only a handful of rows).
+            # (e.g. tests that seed only a handful of rows). The base
+            # ``conn`` is used directly — no thread crosses it here.
             for resolution in resolutions:
                 outcomes.append(
                     _evaluate_one_resolution(
@@ -1243,11 +1296,11 @@ def run_backtest(
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [
                     executor.submit(
-                        _evaluate_one_resolution,
+                        _evaluate_one_resolution_threadsafe,
                         run_id=run_id,
                         params=params,
                         resolution=resolution,
-                        conn=conn,
+                        base_conn=conn,
                         store=store,
                         library_version=library_version,
                         min_support=min_support,

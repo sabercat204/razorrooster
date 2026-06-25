@@ -36,6 +36,7 @@ tables — while still exercising the full T-CB-018 orchestration.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
@@ -995,3 +996,145 @@ def test_run_backtest_system_revision_consistent_across_in_progress_and_complete
     # The resolver was called exactly once; the run-row carries that value.
     assert call_count["n"] == 1
     assert result.run.system_revision == "sha-1"
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety of the multi-worker executor path (Phase 3 advisory H)
+# ---------------------------------------------------------------------------
+#
+# Every other test in this module pins ``max_workers=1``, so the
+# ``ThreadPoolExecutor`` branch shipped untested. Sharing one DuckDB
+# connection across worker threads is not merely wrong — it segfaults the
+# interpreter under contention (verified on duckdb 1.5.2). The fix gives each
+# worker its own ``conn.cursor()``. These tests pin that contract: a regression
+# that reverted to sharing the base connection would either segfault here
+# (crashing the whole run) or fail the distinct-handle assertion below.
+
+
+def _seed_n_resolutions(conn: duckdb.DuckDBPyConnection, n: int) -> datetime:
+    """Seed ``n`` resolved markets each mapped to ``cls-A``; return the base ts."""
+    base_ts = datetime(2025, 6, 1, tzinfo=UTC)
+    for index in range(n):
+        condition_id = f"cond-mt-{index}"
+        _insert_resolution(
+            conn,
+            condition_id=condition_id,
+            resolution_ts=base_ts + timedelta(days=index),
+            winning_outcome_label="yes",
+        )
+        _insert_mapping(
+            conn,
+            mapping_id=f"m-mt-{index}",
+            class_id="cls-A",
+            condition_id=condition_id,
+        )
+    return base_ts
+
+
+class _CursorSpyConn:
+    """Proxy over a real DuckDB connection that records ``cursor()`` calls.
+
+    DuckDB connection attributes are read-only (the object is a C extension),
+    so the spy cannot be monkeypatched onto a live connection. Instead this
+    thin proxy forwards every attribute to the wrapped connection and records
+    each ``cursor()`` handle it hands out, letting the test assert the
+    multi-worker path derives a private cursor per evaluation.
+    """
+
+    def __init__(self, real: duckdb.DuckDBPyConnection) -> None:
+        self._real = real
+        self.cursors_handed_out: list[duckdb.DuckDBPyConnection] = []
+        self._lock = threading.Lock()
+
+    def cursor(self) -> duckdb.DuckDBPyConnection:
+        cur = self._real.cursor()
+        with self._lock:
+            self.cursors_handed_out.append(cur)
+        return cur
+
+    def __getattr__(self, name: str) -> Any:
+        # Only reached for attributes not set on the proxy itself.
+        return getattr(self._real, name)
+
+
+def test_multi_worker_gives_each_worker_a_distinct_cursor_not_the_base_conn(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each executor worker evaluates on its own cursor, never the shared base conn.
+
+    This is the invariant the original code violated: it passed the single
+    ``conn`` object to every worker. We pass a recording proxy as ``conn`` and
+    assert (a) no worker evaluates against the base connection object, and
+    (b) every worker evaluates on a distinct cursor the proxy handed out.
+    """
+    base_ts = _seed_n_resolutions(conn, 12)
+    spy = _CursorSpyConn(conn)
+
+    evaluated_on: list[int] = []
+    lock = threading.Lock()
+    real_eval = replay_module._evaluate_one_resolution
+
+    def _recording_eval(*args: Any, **kwargs: Any) -> Any:
+        with lock:
+            evaluated_on.append(id(kwargs["conn"]))
+        return real_eval(*args, **kwargs)
+
+    monkeypatch.setattr(replay_module, "_evaluate_one_resolution", _recording_eval)
+
+    params = _make_params(
+        since_ts=base_ts - timedelta(days=10),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+    result = run_backtest(
+        params,
+        conn=cast("duckdb.DuckDBPyConnection", spy),
+        store=_FAKE_STORE,
+        now=_NOW,
+        max_workers=4,
+    )
+
+    # The executor branch ran for all 12 resolutions.
+    assert len(result.predictions) == 12
+    assert len(evaluated_on) == 12
+
+    # No worker evaluated against the base connection or the proxy itself.
+    assert id(conn) not in evaluated_on
+    assert id(spy) not in evaluated_on
+
+    # Every worker evaluated on a cursor the proxy handed out, and the handles
+    # are distinct per evaluation (one cursor per call).
+    handed_out_ids = {id(c) for c in spy.cursors_handed_out}
+    assert set(evaluated_on) <= handed_out_ids
+    assert len(set(evaluated_on)) == 12
+
+
+def test_multi_worker_results_match_single_worker(
+    conn: duckdb.DuckDBPyConnection,
+    patched_pipeline: None,
+) -> None:
+    """A ``max_workers=4`` run yields the same predictions as ``max_workers=1``.
+
+    Behavioural equivalence: per-worker cursors must not change *what* the
+    replay computes, only *how* the reads are isolated. Predictions are keyed
+    by ``prediction_id`` because the executor does not preserve input order.
+    """
+    base_ts = _seed_n_resolutions(conn, 12)
+    params = _make_params(
+        since_ts=base_ts - timedelta(days=10),
+        until_ts=_NOW - timedelta(days=DEFAULT_RECENT_WINDOW_DAYS + 1),
+    )
+
+    single = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=1)
+    multi = run_backtest(params, conn=conn, store=_FAKE_STORE, now=_NOW, max_workers=4)
+
+    def _by_id(result: Any) -> dict[str, tuple[Any, ...]]:
+        return {
+            p.prediction_id: (p.status, p.observed, p.model_p, p.polarity, p.skip_reason)
+            for p in result.predictions
+        }
+
+    assert _by_id(single) == _by_id(multi)
+    assert single.run.predictions_scored == multi.run.predictions_scored
+    assert single.run.predictions_total == multi.run.predictions_total
