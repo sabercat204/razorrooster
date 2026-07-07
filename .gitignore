@@ -66,3 +66,6 @@ STATE_AND_NEXT_STEPS.md
 razorrooster-prompt.md.txt
 razorrooster.md
 docs/archive/razorrooster-prompt-old.md
+
+# Claude Code per-project state (config, worktrees) — never commit
+.claude/
