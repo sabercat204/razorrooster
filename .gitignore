@@ -61,3 +61,8 @@ HANDOFF.archive.md
 HANDOFF*.md
 STATE.md
 STATE_AND_NEXT_STEPS.md
+
+# Prompt/spec files (local only)
+razorrooster-prompt.md.txt
+razorrooster.md
+docs/archive/razorrooster-prompt-old.md
